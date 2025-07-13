@@ -1,13 +1,7 @@
-
-              ,d                  ,d     
-              88                  88     
-8b,dPPYba,  MM88MMM  ,adPPYba,  MM88MMM  
-88P'   `"8a   88    a8P_____88    88     
-88       88   88    8PP"""""""    88     
-88       88   88,   "8b,   ,aa    88,    v1.000 
-88       88   "Y888  `"Ybbd8"'    "Y888  from Disasterlab
-
----
+```
+ntet.ksp | a multisample ensembler
+v1.00    | ©2023 dlab
+```
 
 Looking to stretch the utility of the libraries and patches you already have? Breathe weird life into your Kontakt instruments with ntet.
 

@@ -1,5 +1,7 @@
+```
 panoram.ksp | a novelty panner
-v1.00       | from dlab
+v1.00       | ©2025 dlab
+```
 
 panoram is dedicated to novel panning techniques. You can stage your panning as if it were instruments on a stage, as well as having different algorithms for the panning of individual voices. Hocketing, mapping different keys to different positions, moving with velocity ... using this script, these can all be accomplished with ease. You can also send the generated data to Kontakt's source engine, for further use.
 
