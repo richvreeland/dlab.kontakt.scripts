@@ -1,0 +1,313 @@
+// panoram is dedicated to novel panning techniques.
+
+define TITLE := "panoram"
+define VERSION := "v1.00"
+
+import "../Library/Macros.ksp"
+import "../Library/Functions.ksp"
+
+on init
+	{#pragma save_compiled_source /Users/r/Documents/Native Instruments/Kontakt 7/scripts/panoram.txt}
+	boilerplate(TITLE, VERSION, 4, AUTOMATION_BASE_ID_PANHANDLER)
+
+	declare polyphonic temp
+	declare i
+	declare @txt
+	declare hocket_i
+
+	//
+
+	knob(2, 2, Locations, "Locations", 0, 8, 3, "Locations | How many discrete locations to pan to. Zero is equivalent to regular (infinite location) panning.", 1, "Locations")
+	declare !LocationTxts[8]
+	for i := 0 to 7
+		LocationTxts[i] := "x"
+	end for
+
+	label(3, 2, PanHud, "", 1, 2, "This is the HUD for displaying pan positions.")
+	PanHud->text_alignment := 1
+
+	pers_value_edit(3, 4, Tilt, "Tilt", -100, 100, 0, 1, "Tilt | The base pan position of the effect.", 1, "Tilt")
+	declare TrimL := -1000
+	declare TrimR := 1000
+	pers_value_edit(3, 5, Width, "Width", 0, 100, 100, 1, "Width | How wide the effect is.", 1, "Width")
+
+	declare ~Flux_Alpha
+	declare !fluxTxts[10] := ("fluX", "flUx", "fLux", "FLUX", "F!UX", "F!#X", "FL#X", "F!?!", "#?!X")
+	declare fluxFonts[5] := (0, 1, 17, 18, 24)
+	pers_value_edit(3, 6, Flux, "Flux", 0, 100, 0, 1, "Flux | the amount of noise injected into the pan output.", 1, "Flux")
+
+	const _MODE
+		HocketL2R := 1
+		HocketR2L := 2
+		PitchL2R := 3
+		PitchR2L := 4
+		VelocityL2R := 5
+		VelocityR2L := 6
+		FateOfKeys := 7
+		FateOfVelo := 8
+		FateOfBoth := 9
+		Flux := 10
+	end const
+	declare !modeStrings[] := ("Hocket L2R", "Hocket R2L", "Pitch L2R", "Pitch R2L", "Velocity L2R", "Velocity R2L", "Fate of Keys", "Fate of Velo", "Fate of Both", "Flux")
+	menu(2, 4, Mode, 1, "Mode | Which panning mode to use.", modeStrings, "Mode")
+
+	declare mode_id := get_ui_id(Mode)
+
+	declare !ModeTxts[10]
+	!ModeTxts[0] := modeStrings[0] & " | " & "Cycle through pan locations from left to right."
+	!ModeTxts[1] := modeStrings[1] & " | " & "Cycle through pan locations from right to left."
+	!ModeTxts[2] := modeStrings[2] & " | " & "Map played notes to pan locations from left to right based on pitch."
+	!ModeTxts[3] := modeStrings[3] & " | " & "Map played notes to pan locations from right to left based on pitch."
+	!ModeTxts[4] := modeStrings[4] & " | " & "Map played notes to pan locations from left to right based on velocity."
+	!ModeTxts[5] := modeStrings[5] & " | " & "Map played notes to pan locations from right to left based on velocity."
+	!ModeTxts[6] := modeStrings[6] & " | " & "Deterministically map each key to a pan location."
+	!ModeTxts[7] := modeStrings[7] & " | " & "Deterministically map each played note to a pan location based on velocity."
+	!ModeTxts[8] := modeStrings[8] & " | " & "Deterministically map each played note to a pan location based on pitch and velocity."
+	!ModeTxts[9] := modeStrings[9] & " | " & "Map each played note to a random pan location."
+
+	pers_value_edit(2, 5, KeyLo, "Range Lo", 1, 127, 1, VALUE_EDIT_MODE_NOTE_NAMES, "Range Lo | Lowest pitch in the keyboard range that will affect panning.", 1, "Range Lo (Pitch)")
+	pers_value_edit(2, 6, KeyHi, "Range Hi", 1, 127, 127, VALUE_EDIT_MODE_NOTE_NAMES, "Range Hi | Highest pitch in the keyboard range that will affect panning.", 1, "Range Hi (Pitch)")
+	pers_value_edit(2, 5, VelLo, "Range Lo", 1, 127, 1, 1, "Range Lo | Lowest velocity played that will affect panning.", 1, "Range Lo (Velocity)")
+	pers_value_edit(2, 6, VelHi, "Range Hi", 1, 127, 127, 1, "Range Hi | Highest velocity played that will affect panning.", 1, "Range Hi (Velocity)")
+
+	pers_value_edit(2, 5, Seed, "Seed", 1, 9999, 1, 1, "Seed | The seed value for use with a seed based pan mode.", 1, "Seed")
+
+	knob(4, 2, AmpTilt, "Amp Tilt", -100, 100, 0, "Amp Tilt | Skew volume of the sound stage from left to right.", 1, "Amp Tilt")
+	declare AmpL
+	declare AmpR
+
+	define SEND_ID_TXT := "Send ID | Which 'From Script' ID to use to send generated data to source engine, for use in other contexts. -1 is off."
+	pers_value_edit(2, 8, SendID, "Send ID", -1, 999, -1, 1, SEND_ID_TXT, 1, "Send ID")
+	label(3, 8, SendIDTxt, "(off)", 1, 1, SEND_ID_TXT)
+
+	//
+
+	set_listener(NI_SIGNAL_TIMER_MS, 1000)
+end on
+
+//
+
+on persistence_changed
+	call UpdateLocations
+	call UpdateTilt
+	call UpdateMode
+end on
+
+//
+
+// for Value Edit and Menu UI, which require automaton ui controls if automation is desired.
+literate_macro(do_on_automaton(#l#)) on Mode, Seed, Flux, Tilt, Width, KeyLo, KeyHi, VelLo, VelHi
+
+//
+
+do_on_automaton(Flux)
+
+on ui_control(Flux)
+	Flux_Alpha := pct_to_alpha(Flux)
+	FluxAutomaton := Flux
+
+	if (Flux = 0)
+		Flux->text := "Flux"
+		Flux->font_type := 0
+	end if
+end on
+
+on ui_control(Mode)
+	call UpdateMode
+	msg(!ModeTxts[Mode-1])
+end on
+
+function UpdateMode
+	show(Flux)
+	literate_macro(hide(#l#)) on KeyLo, KeyHi, VelLo, VelHi, Seed
+
+	select(Mode)
+		case _MODE.PitchL2R to _MODE.PitchR2L
+			show(KeyLo)
+			show(KeyHi)
+		case _MODE.VelocityL2R to _MODE.VelocityR2L
+			show(VelLo)
+			show(VelHi)
+		case _MODE.FateOfKeys to _MODE.FateOfBoth
+			show(Seed)
+		case _MODE.Flux
+			hide(Flux)
+	end select
+end function
+
+on ui_control(SendID)
+	SendIDTxt->text := "(off)"
+	if (SendID > -1)
+		SendIDTxt->text := "-> ..."
+	end if
+end on
+
+on ui_control(Tilt)
+	call UpdateTilt
+end on
+
+function UpdateTilt
+	if (Tilt < 0)
+		TrimL := -1000
+		TrimR := 1000 + (Tilt * 10)
+	else if (Tilt > 0)
+		TrimL := -1000 + (Tilt * 10)
+		TrimR := 1000
+	end if
+end function
+
+on ui_control(Locations)
+	call UpdateLocations
+end on
+
+function UpdateLocations
+	PanHud->text := ""
+
+	select(Locations)
+		case 0
+			add_text_line(PanHud, "(any position)")
+		case 1
+			add_text_line(PanHud, "-------" & LocationTxts[0] & "-------")
+		case 2
+			add_text_line(PanHud, LocationTxts[0] & "-------------" & LocationTxts[1])
+		case 3
+			add_text_line(PanHud, LocationTxts[0] & "------" & LocationTxts[1] & "------" & LocationTxts[2])
+		case 4
+			add_text_line(PanHud, LocationTxts[0] & "----" & LocationTxts[1] & "---" & LocationTxts[2] & "----" & LocationTxts[3])
+		case 5
+			add_text_line(PanHud, LocationTxts[0] & "---" & LocationTxts[1] & "--" & LocationTxts[2] & "--" & LocationTxts[3] & "---" & LocationTxts[4])
+		case 6
+			add_text_line(PanHud, LocationTxts[0] & "--" & LocationTxts[1] & "--" & LocationTxts[2] & "-" & LocationTxts[3] & "--" & LocationTxts[4] & "--" & LocationTxts[5])
+		case 7
+			add_text_line(PanHud, LocationTxts[0] & "--" & LocationTxts[1] & "-" & LocationTxts[2] & "-" & LocationTxts[3] & "-" & LocationTxts[4] & "-" & LocationTxts[5] & "--" & LocationTxts[6])
+		case 8
+			add_text_line(PanHud, LocationTxts[0] & "-" & LocationTxts[1] & "-" & LocationTxts[2] & "-" & LocationTxts[3] & "-" & LocationTxts[4] & "-" & LocationTxts[5] & "-" & LocationTxts[6] & "-" & LocationTxts[7])
+	end select
+end function
+
+function ResetLocations
+	for i := 0 to 7
+		LocationTxts[i] := "x"
+	end for
+end function
+
+//
+
+on listener
+	do_manage_msg(15000)
+
+	if (Flux > 0 and random(1, lerpInt(50, 4, Flux_Alpha)) = 1)
+		Flux->text := !fluxTxts[random(0,9)]
+		Flux->font_type := fluxFonts[random(0, 4)]
+	else
+		Flux->text := "Flux"
+		Flux->font_type := 0
+	end if
+end on
+
+//
+
+on note
+	call ResetLocations
+
+	if (Locations = 0)
+		select (Mode)
+			case _MODE.HocketL2R // ... this is a little weird from a UX perspective ?
+				temp := hocket_i mod 16
+				inc(hocket_i)
+				temp := real_to_int(100.0 * int_to_real(temp) / 16.0)
+			case _MODE.HocketR2L // ... this is a little weird from a UX perspective ?
+				temp := 16 - (hocket_i mod 16)
+				inc(hocket_i)
+				temp := real_to_int(100.0 * int_to_real(temp) / 16.0)
+			case _MODE.PitchL2R
+				temp := map(EVENT_NOTE, KeyLo, KeyHi, 0, 100)
+			case _MODE.PitchR2L
+				temp := map(EVENT_NOTE, KeyLo, KeyHi, 100, 0)
+			case _MODE.VelocityL2R
+				temp := map(EVENT_VELOCITY, VelLo, VelHi, 0, 100)
+			case _MODE.VelocityR2L
+				temp := map(EVENT_VELOCITY, VelLo, VelHi, 100, 0)
+			case _MODE.FateOfKeys
+				temp := randRangeA(0, 100, EVENT_NOTE * Seed)
+			case _MODE.FateOfVelo
+				temp := randRangeA(0, 100, EVENT_VELOCITY * Seed)
+			case _MODE.FateOfBoth
+				temp := randRangeA(0, 100, EVENT_NOTE * EVENT_VELOCITY * Seed)
+			case _MODE.Flux
+				temp := random(0, 100)
+		end select
+	else if (Locations = 1)
+		temp := 50
+	else
+		select (Mode)
+			case _MODE.HocketL2R
+				temp := hocket_i mod Locations
+				inc(hocket_i)
+			case _MODE.HocketR2L
+				temp := (Locations - 1) - (hocket_i mod Locations)
+				inc(hocket_i)
+			case _MODE.PitchL2R
+				temp := clamp(map(EVENT_NOTE, KeyLo, KeyHi, 0, Locations), 0, Locations - 1) { get last value before very end }
+				temp := min(KeyHi, temp)
+			case _MODE.PitchR2L
+				temp := clamp(map(EVENT_NOTE, KeyLo, KeyHi, Locations, 0), 0, Locations - 1) { get last value before very end }
+				temp := min(KeyHi, temp)
+			case _MODE.VelocityL2R
+				temp := clamp(map(EVENT_VELOCITY, VelLo, VelHi, 0, Locations), 0, Locations - 1) { get last value before very end }
+				temp := min(VelHi, temp)
+			case _MODE.VelocityR2L
+				temp := clamp(map(EVENT_VELOCITY, VelLo, VelHi, Locations, 0), 0, Locations - 1) { get last value before very end }
+				temp := min(VelHi, temp)
+			case _MODE.FateOfKeys
+				temp := randRangeA(0, Locations - 1, EVENT_NOTE * Seed)
+			case _MODE.FateOfVelo
+				temp := randRangeA(0, Locations - 1, EVENT_VELOCITY * Seed)
+			case _MODE.FateOfBoth
+				temp := randRangeA(0, Locations - 1, EVENT_NOTE * EVENT_VELOCITY * Seed)
+			case _MODE.Flux
+				temp := random(0, Locations - 1)
+		end select
+
+		LocationTxts[temp] := "*"
+
+		temp := real_to_int(100.0 * int_to_real(temp) / int_to_real(Locations - 1))
+	end if
+
+	call UpdateLocations
+
+	temp := clamp(temp, 0, 100)
+	temp := lerpInt(TrimL, TrimR, pct_to_alpha(temp))
+	temp := lerpInt(Tilt * 10, temp, pct_to_alpha(Width))
+	if (Mode < 7)
+		temp := lerpInt(temp, random(-1000, 1000), Flux_Alpha)
+	end if
+
+	change_pan(EVENT_ID, temp, 0)
+	if (SendID > -1)
+		set_event_par_arr(EVENT_ID, EVENT_PAR_MOD_VALUE_ID, (temp+1000)*500, SendID)
+		SendIDTxt->text := "-> " & ((real(temp)+1000.0)/2000.0)
+	end if
+
+	if (temp < 0)
+		PanHud->textline := "Pan: " & (abs(temp) / 10) & "% L"
+	else if (temp > 0)
+		PanHud->textline := "Pan: " & (temp / 10) & "% R"
+	else
+		PanHud->textline := "Pan: Center"
+	end if
+
+	if (AmpTilt < 0)
+		AmpL := map(AmpTilt, -100, 0, 6000, 0)
+		AmpR := map(AmpTilt, -100, 0, -24000, 0)
+	else
+		AmpL := map(AmpTilt, 0, 100, 0, -24000)
+		AmpR := map(AmpTilt, 0, 100, 0, 6000)
+	end if
+
+	temp := map(temp, -1000, 1000, AmpL, AmpR)
+	change_vol(EVENT_ID, temp, 1)
+end on
+
+on release
+end on

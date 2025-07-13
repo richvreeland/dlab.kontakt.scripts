@@ -1,0 +1,2501 @@
+define VERSION := "v1.000"
+{
+	       888888888888  888888888888
+	            88            88
+	            88            88
+	8b,dPPYba,  88  ,adPPYba, 88
+	88P'   `"8a 88 a8P_____88 88
+	88       88 88 8PP""""""" 88
+	88       88 88 "8b,   ,aa 88
+	88       88 88  `"Ybbd8"' 88
+
+	(font : Univers)
+
+	by Rich Vreeland
+	Compatibility : Kontakt v5.8.1 and up
+
+	Breathe weird life into stuff.
+}
+
+import "Library/Macros.ksp"
+import "Library/Functions.ksp"
+
+////////////////////////////////////////////////////////////////////////////////
+//
+//  88888888ba,   88888888888 88888888888 88 888b      88 88888888888 ad88888ba
+//  88      `"8b  88          88          88 8888b     88 88         d8"     "8b
+//  88        `8b 88          88          88 88 `8b    88 88         Y8,
+//  88         88 88aaaaa     88aaaaa     88 88  `8b   88 88aaaaa    `Y8aaaaa,
+//  88         88 88"""""     88"""""     88 88   `8b  88 88"""""      `"""""8b,
+//  88         8P 88          88          88 88    `8b 88 88                 `8b
+//  88      .a8P  88          88          88 88     `8888 88         Y8a     a8P
+//  88888888Y"'   88888888888 88          88 88      `888 88888888888 "Y88888P"
+//
+////////////////////////////////////////////////////////////////////////////////
+
+define TABLE_TOOLTIP := "Shift+drag for finer values. Ctrl+drag to draw lines."
+
+define OCTAVE := 1200000
+define JUST_FIFTH := 701955 // in millicents
+define JUST_FOURTH := 498045
+
+define MAX_VOICES := 16
+define NOISE_FACTOR := 1.0
+
+// literate macro defines ///////////////////////////
+
+// DO NOT CHANGE ORDER, IT WILL BREAK BACKWARDS COMPATIBILITY FOR PRESETS !!!
+define TABLE_NAMES := Volume, Pitch, Neighbor, Detune, Pan, Delay, Seek, Attack, Release
+
+//////////////////////////////////////////////////////
+
+define TABLE_COLOR_INACTIVE := 9333333h
+
+define do_get_table_range(#prefix#) := #prefix#.TABLE_RANGE_X, #prefix#.TABLE_RANGE_Y
+
+//////////////////////////////////////////////////////////////////////
+//
+//    ,ad8888ba,   888b      88        88 888b      88 88 888888888888
+//   d8"'    `"8b  8888b     88        88 8888b     88 88      88
+//  d8'        `8b 88 `8b    88        88 88 `8b    88 88      88
+//  88          88 88  `8b   88        88 88  `8b   88 88      88
+//  88          88 88   `8b  88        88 88   `8b  88 88      88
+//  Y8,        ,8P 88    `8b 88        88 88    `8b 88 88      88
+//   Y8a.    .a8P  88     `8888        88 88     `8888 88      88
+//    `"Y8888Y"'   88      `888        88 88      `888 88      88
+//
+//////////////////////////////////////////////////////////////////////
+
+macro do_declare_table_family(#prefix#, #INC_SIZE#, #TABLE_MAX#, #TABLE_COLOR#, #TABLE_COLOR_BLINK#, #CURVE#, #ENUM#, #HUD_TXT#, #NAME#)
+	family #prefix#
+		declare const INC_SIZE := #INC_SIZE#
+		declare const TABLE_MAX := #TABLE_MAX# // this can be negative, which is shorthand for a range
+		declare const TABLE_RANGE_X := min(#TABLE_MAX#, 0)
+		declare const TABLE_RANGE_Y := abs(#TABLE_MAX#)
+		declare const TABLE_SIZE := #prefix#.TABLE_RANGE_Y - #prefix#.TABLE_RANGE_X
+		declare const ENUM := #ENUM#
+		declare const CURVE := #CURVE#
+		declare pers cacheTable[MAX_VOICES]
+		declare inAutopilot
+		declare const TABLE_COLOR := #TABLE_COLOR#
+		declare const TABLE_COLOR_BLINK := #TABLE_COLOR_BLINK#
+		declare @NAME := #NAME#
+		declare @TEXT_HUD := #HUD_TXT# & " " & TABLE_TOOLTIP
+		declare temp
+		declare ~temp_real
+	end family
+end macro
+
+on init
+
+	{#pragma save_compiled_source /Users/r/Documents/Native Instruments/Kontakt/scripts/nTet.txt}
+	boilerplate("ntet", 8, 200)
+
+	declare OVERTONES[17] := (0, 1200, 1902, 2400, 2786, 3102, 3369, 3600, 3804, 3986, 4061, 4212, 4331, 4443, 4548, 4647, 4800)
+	declare GUITAR[11] := (0, 500, 1000, 1500, 1900, 2400, 2900, 3400, 3900, 4300, 4800)
+	declare P4P8[9] := (0, JUST_FOURTH, OCTAVE, JUST_FOURTH+OCTAVE, 2*OCTAVE, (2*OCTAVE)+JUST_FOURTH, 3*OCTAVE, (3*OCTAVE)+JUST_FOURTH, 4*OCTAVE)
+	declare P5P8[9] := (0, JUST_FIFTH, OCTAVE, JUST_FIFTH+OCTAVE, 2*OCTAVE, (2*OCTAVE)+JUST_FIFTH, 3*OCTAVE, (3*OCTAVE)+JUST_FIFTH, 4*OCTAVE)
+	declare PENTA[21] := (0, 204, 386, 702, 884, 1200, 1404, 1586, 1902, 2084, 2400, 2604, 2786, 3102, 3284, 3600, 3804, 3986, 4302, 4484, 4800)
+
+	declare !transformerTooltips[26] := ("Random | Randomizes the table values", "Shuffle | Shuffles the table values", "Wiggle | Randomly moves the table values back or forth one position", "Wobble | Randomly increases or decreases the table values slightly", "Flip Flop | inverts the table values", "Reverse | Reverses the table values from left to right", "Criss Cross | Reverse and inverts the table values", "West 1 | Shifts the table values one column to the left", "West 2 | Shifts the table values two columns to the left", "West n/2 | Shifts the table values halfway to the left", "West n | Visibly shifts the table values all the way to the left", "East 1 | Shifts the table values one column to the right", "East 2 | Shifts the table values two columns to the right", "East n/2 | Shifts the table values halfway to the right", "East n | Visibly shifts the table values all the way to the right", "North | Increases the table values slightly", "North 1/4 | Increases the table values by 25%", "North 1/3 | Increases the table values by 33%", "Pulse | Increases the table values by 50%", "South | Decreases the table values slightly", "South 1/4 | Decreases the table values by 25%", "South 1/3 | Decreases the table values by 33%", "Northwest | Increases the table values slightly and shifts values left by one column", "Northeast | Increases the table values slightly and shifts values right by one column", "Southwest | Decreases the table values slightly and shifts values left by one column", "Southeast | Decreases the table values slightly and shifts values right by one column")
+
+	////////////////////////////////////////////////////////
+	//
+	//	Table Families
+	//
+	////////////////////////////////////////////////////////
+
+	do_declare_table_family(Volume   , 10 , 100  , 92BCB71h ,   9CCCCCCh, 0 ,  1, "Volume | This table is for manipulating the volume of individual tones", "Volume")
+	do_declare_table_family(Pitch    , 1  , -8   , 98F8DBFh ,   9CCCCCCh, 0 ,  2, "Scaling the distance of pitches chosen. Negative values sound as 'undertones'.", "Pitch")
+	do_declare_table_family(Neighbor , 1  , -36  , 973D3A1h ,   98F8DBFh, 0 ,  4, "Borrow samples from other parts of the sample range.", "Neighborize")
+	do_declare_table_family(Detune	 , 5  , -25  , 9F87468h ,   9CCCCCCh, 0 ,  5, "Detune | This table is for manipulating the tuning of individual voices.", "Detune")
+	do_declare_table_family(Pan	     , 10 , -100 , 9008C8Ch ,   9CCCCCCh, 0 ,  6, "100 is Hard Left, -100 is Hard Right. Center is you guessed it.", "Pan")
+	do_declare_table_family(Delay	 , 10 , 500  , 90878F7h ,   9CCCCCCh, 10,  7, "Triggered successively from shortest to longest delay. A delayed note won't play if you release key(s) before the specified delay time.", "Delay")
+	do_declare_table_family(Seek	 , 10 , 100  , RGB.WHITE,   90878F7h, 25,  8, "Requires a non DFD source, or the sample mod value to be specified.", "Seek")
+	do_declare_table_family(Attack	 , 100, 2500 , RGB.YELLOW,  90878F7h, 25 , 9, "Attack Time aka Fade In.", "Attack")
+	do_declare_table_family(Release  , 100, 5000 , 9F078AFh ,   90878F7h, 25, 10, "If zero, tones will release in sync with what you play.", "Release")
+
+	// addendums
+	family Delay
+		declare %order[MAX_VOICES]
+		declare polyphonic prev
+	end family
+
+	////////////////////////////////////////////////////////
+	//
+	//	Other variable declarations.
+	//
+	////////////////////////////////////////////////////////
+
+	declare polyphonic $count
+	declare polyphonic new_event
+
+	declare ~VolumeMod
+
+	declare $temp_i
+	declare ~temp_f
+	declare $i
+
+	declare $last_on
+
+	declare polyphonic on_volume
+
+	declare polyphonic index
+	declare polyphonic pDelta
+
+	declare polyphonic harmonicMillicentsDelta
+
+	declare TableSelection
+
+	family nTet
+		declare fwd := 1
+		declare prevMenu := 1
+	end family
+
+	family tone
+		declare polyphonic note
+		declare polyphonic pitch_id
+		declare polyphonic tune
+		declare polyphonic transposition
+		declare polyphonic delay
+		declare polyphonic seek
+		declare polyphonic pan
+		declare polyphonic fade
+		declare	polyphonic volume
+		declare polyphonic pointer_over
+		declare polyphonic pointer_under
+		declare polyphonic harmonic_i
+		declare polyphonic duration
+		declare polyphonic release
+		declare polyphonic release_i
+		declare polyphonic release_pi
+		declare polyphonic silent := 0
+		declare polyphonic temp
+	end family
+
+	family debug
+		declare @text
+	end family
+
+	declare seed_counter
+	declare pers seed_broken
+
+	////////////////////////////////////////////////////////
+	//
+	//	Variables : Preset
+	//
+	////////////////////////////////////////////////////////
+
+	declare load_arr_id := -1
+	declare LoadPatchTrigger := 0
+	declare LoadPatchCounter := 0
+	declare LoadingLabel_Id
+	declare LoadUiFileWaitID
+	declare PresetTemp[500]
+	declare savepreset_arr_id := -1
+
+	// NI_CALLBACK_ID = Returns the ID number of the callback. Every callback = unique ID number which remains the same within a function.
+	declare LoadWaitID
+	declare loadpreset_arr_id := -1
+
+	////////////////////////////////////////////////////////////////////////////////////////////////
+	//
+	//  88        88 88
+	//  88        88 88
+	//  88        88 88
+	//  88        88 88
+	//  88        88 88
+	//  88        88 88
+	//  Y8a.    .a8P 88
+	//   `"Y8888Y"'  88
+	//
+	////////////////////////////////////////////////////////////////////////////////////////////////
+
+	set_listener(NI_SIGNAL_TIMER_MS, 1000)
+	set_ui_color(9644C67h)
+
+	define GRID_Y_HUD := 9
+	define GRID_Y_MENU := 10
+
+	////////////////////////////////////////////////////////////////////////////////////////////////
+	//
+	// UI : Settings Menu
+	//
+	////////////////////////////////////////////////////////////////////////////////////////////////
+
+	label(1, GRID_Y_MENU-1, SettingsTxt, "Settings!", 1, 1, "")
+
+	menu(SettingsMenu, 1, GRID_Y_MENU, "Settings Menu | Different groups of settings to display.")
+	add_menu_item(SettingsMenu, "General", 1)
+	add_menu_item(SettingsMenu, "Pitch", 2)
+	add_menu_item(SettingsMenu, "Tablefunk", 4)
+	add_menu_item(SettingsMenu, "--------------------", -1)
+	add_menu_item(SettingsMenu, "Initialize", 10)
+	add_menu_item(SettingsMenu, "Load Preset", 11)
+	add_menu_item(SettingsMenu, "Save Preset", 12)
+	SettingsMenu->font_type := 4
+
+	////////////////////////////////////////////////////////////////////////////////////////////////
+	//
+	//	Settings : General
+	//
+	////////////////////////////////////////////////////////////////////////////////////////////////
+
+	define UI_NTET := Flux, PlayableSetup, SampleTxt, SampleSetup, Seed, PlayableTxt
+
+	declare ~Flux_Alpha
+	declare !fluxTxts[10] := ("fluX", "flUx", "fLux", "FLUX", "F!UX", "F!#X", "FL#X", "F!?!", "#?!X")
+	declare fluxFonts[5] := (0, 1, 17, 18, 24)
+	pers_value_edit(1, 11, Flux, "Flux", 0, 100, 0, 1, "Flux | the amount of noise injected into all settings.", 1, "Flux")
+
+	pers_value_edit(1, 12, Seed, "Seed", 0, 99999, 0, 1, "Seed | Randomly generated presets.", 1, "Seed")
+
+	label(1, 13, SampleTxt, "Sample Range", 1, 1, "")
+
+	declare read MinBorrowedNote := 48
+	declare read MaxBorrowedNote := 72
+	declare(ui_button, 1, 14, SampleSetup, noteName(MinBorrowedNote) & " to " & noteName(MaxBorrowedNote), "Sample Range | Click this to setup the sample range that ntet will use.", 0, "")
+
+	label(1, 15, PlayableTxt, "Playable Range", 1, 1, "Playable Range | the keyboard range that ntet will affect.")
+
+	declare read MinPlayableNote := 48
+	declare read MaxPlayableNote := 84
+	declare(ui_button, 1, 16, PlayableSetup, noteName(MinPlayableNote) & " to " & noteName(MaxPlayableNote), "Playable Range | Click this to setup the playable range for ntet.", 0, "")
+
+	declare PlayableSetupId
+
+	////////////////////////////////////////////////////////
+	//
+	//	Settings : Table Funk
+	//
+	////////////////////////////////////////////////////////
+
+	define UI_SELECT_TABLE := TableOffsetX, TableOffsetY, TableScalar, SelectFunction, ApplyTableFunc
+	define UI_TABLEFUNK := UI_SELECT_TABLE, SelectTable
+
+	START_INC(N, GRID_Y_MENU+1, 1)
+	menu(SelectTable, 1, N, "Target(s) | The tables to manipulate using table functions.")
+	add_menu_item(SelectTable, "- Target(s) - ", 0)
+	add_menu_item(SelectTable, Volume.NAME, Volume.ENUM)
+	add_menu_item(SelectTable, Pitch.NAME, Pitch.ENUM)
+	add_menu_item(SelectTable, Neighbor.NAME, Neighbor.ENUM)
+	add_menu_item(SelectTable, Detune.NAME, Detune.ENUM)
+	add_menu_item(SelectTable, Pan.NAME, Pan.ENUM)
+	add_menu_item(SelectTable, Delay.NAME, Delay.ENUM)
+	add_menu_item(SelectTable, Seek.NAME, Seek.ENUM)
+	add_menu_item(SelectTable, Attack.NAME, Attack.ENUM)
+	add_menu_item(SelectTable, Release.NAME, Release.ENUM)
+	add_menu_item(SelectTable, "---", -1)
+	add_menu_item(SelectTable, "All", 10)
+	add_menu_item(SelectTable, "---", -1)
+	add_menu_item(SelectTable, "Random", 11)
+
+	pers_value_edit(1, N, TableScalar,  "Scale", -1000, 1000, 100, 100, "Scale | Scale the table values.", 0, "")
+	pers_value_edit(1, N, TableOffsetX, "Offset X      ", -1, 1, 0, 1, "Offset X | Neighbor the tables to the left or the right.", 0, "")
+	pers_value_edit(1, N, TableOffsetY, "Offset Y      ", -1, 1, 0, 1, "Offset Y | Neighbor the table values up or down.", 0, "")
+
+	menu(SelectFunction, 1, N, "Select Function | Choose a function to apply to the selected tables.")
+	declare(ui_button, 1, N, ApplyTableFunc, "Apply", "Apply | Will apply the function selected above to the table(s) selected from the target menu.", 0, "Apply the function selected from the function pulldown.")
+	END_INC
+
+	START_INC(P, -1, 1)
+	literate_macro(add_menu_item(SelectFunction, #l#, P)) on "- Function -", "Initialize", "Invert", "Reverse", "Randomize", "Shuffle", "Sine", "Ramp", "Triangle", "Stripe", "Criss Cross", "West n/2", "West n", "East n/2", "East n", "North 1/4", "North 1/3", "Pulse", "South 1/4", "South 1/3", "Northwest", "Northeast", "Southwest", "Southeast"
+
+	declare !tablefunkTooltips[23] := ("Initialize | Resets all the table values", "Invert | Inverts (flips) all the table values", "Reverse | Reverses all the table values from left to right", "Randomize | Randomizes the table values", "Shuffle | Shuffles the table values", "Sine | Sets table values to a sinuous pattern", "Ramp | Sets table values to a ramping (increasing) line", "Triangle | Sets table values to a triangle patern", "Stripe | Sets table values to a striped pattern", "Criss Cross | Reverse and inverts the table values", "West n/2 | Shifts the table values halfway to the left", "West n | Visibly shifts the table values all the way to the left", "East n/2 | Shifts the table values halfway to the right", "East n | Visibly shifts the table values all the way to the right", "North 1/4 | Increases the table values by 25%", "North 1/3 | Increases the table values by 33%", "Pulse | Increases the table values by 50%", "South 1/4 | Decreases the table values by 25%", "South 1/3 | Decreases the table values by 33%", "Northwest | Increases the table values slightly and shifts values left by one column", "Northeast | Increases the table values slightly and shifts values right by one column", "Southwest | Decreases the table values slightly and shifts values left by one column", "Southeast | Decreases the table values slightly and shifts values right by one column")
+
+	END_INC
+
+	////////////////////////////////////////////////////////
+	//
+	//	Settings : Pitch
+	//
+	////////////////////////////////////////////////////////
+
+	define UI_PITCH := TamePitches, SpellMode, PitchScale, PitchScaleTxt, SpellModeTxt, TamePitchesTxt
+
+	label(1, GRID_Y_MENU+1, PitchScaleTxt, "Musical Scale", 1, 1, "Pitch Scale | The scale or series of pitches to use.")
+	menu(PitchScale, 1, GRID_Y_MENU+2, "Pitch Scale | The scale or series of pitches to use.")
+	START_INC(P, 0, 1)
+	literate_macro(add_menu_item(PitchScale, #l#, P)) on "Harmonics", "The Just Circle", "The Just Cycle", "Standard Guitar", "Octaves", "Fifths & Octaves", "Just Fifths", "Just Fourths", "Pentatonics"
+	declare_slider_automaton(PitchScale, "Pitch Scale", 0, 8)
+	END_INC
+
+	label(1, GRID_Y_MENU+3, SpellModeTxt, "Spelling", 1, 1, "Spell Mode | Whether pitches are always above the played note, below, or either (default).")
+	menu(SpellMode, 1, GRID_Y_MENU+4, "Spell Mode | Whether pitches are always above the played note, below, or either (default).")
+	add_menu_item(SpellMode, "Above & Below", 1)
+	add_menu_item(SpellMode, "Above Only", 2)
+	add_menu_item(SpellMode, "Below Only", 3)
+
+	label(1, GRID_Y_MENU+5, TamePitchesTxt, "Tame?", 1, 1, "Tame Pitches | Enabling this setting will decrease the volume of voices based on how far they are from the root pitch.")
+
+	// when on, reduces volume of tones as pitch distance increases from played note.
+	declare(pers ui_switch, 1, GRID_Y_MENU+6, TamePitches, "OK", "Tame Pitches | Enabling this setting will decrease the volume of voices based on how far they are from the root pitch.", 0, "")
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Ensemble
+	//
+	////////////////////////////////////////////////////////
+
+	label(1, 1, VoiceTxt, "Ensemble!", 1, 1, "Ensemble | Module dealing with how the ensemble size behaves.")
+
+	menu(VoiceMode, 1, 2, "Voice Mode | Modes controlling the number of voices.")
+	START_INC(P, 1, 1)
+	literate_macro(add_menu_item(VoiceMode, #l#, P)) on "Static", "n +1", "n -1", "n Wiggle", "n Pyramid", "n d20", "n Vel LoHi", "n Vel HiLo", "n Keys L to R", "n Keys R to L"
+	END_INC
+	declare_slider_automaton(VoiceMode, "Voice Mode", 1, 10)
+
+	declare pers Voices
+	declare pers VoiceModMinVoices
+	declare pers VoiceModMaxVoices
+
+	label(1, 3, PolyphonyTxt, "", 1, 1, "Polyphony | The possible range of ensemble sizes that can be used on each key press.")
+
+	xy(Polyphony, 1, 1, 4, 1, 5, "Polyphony | The possible range of ensemble sizes that can be used on each key press.")
+	Polyphony[0] := 0.5
+	Polyphony[1] := 0.5
+	// automation
+	declare !polyLabels[2] := ("Polyphony Range X", "Polyphony Range Y")
+	set_automation_arr(get_ui_id(Polyphony), polyLabels)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Volume
+	//
+	////////////////////////////////////////////////////////
+
+	label(2, 1, VolumeTxt, Volume.NAME & "!", 1, 1, "Volume | This module deals with the overall amplitude level of individual voices.")
+
+	menu(VolumeMode, 2, 2, "Volume Mode | Different modes controlling volume.")
+	add_menu_item(VolumeMode, "- STATIONARY -", -1)
+	add_menu_item(VolumeMode, "Static", 1)
+	do_add_menu_generic_transformers(VolumeMode)
+
+	pers_value_edit(2, 3, DryVolume, "Dry", 0, 100, 0, 1, "Dry | the volume of the dry signal.", 1, "Dry")
+
+	table(2, 4, Volume, MAX_VOICES, 1, 5, 100, Volume.TEXT_HUD, 1)
+	VolumeTable[0] := 100
+
+	// lol
+	declare VolumeBtn := 1
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Pitch
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 3, 1, PitchBtn, Pitch.NAME, "Pitch | This section deals with the pitches of each voice.", 1, "Pitch")
+
+	menu(PitchMode, 3, 2, "Pitch Mode | Different modes controlling the pitch module.")
+	add_menu_item(PitchMode, "- STATIONARY -", -1)
+	add_menu_item(PitchMode, "Static", 1)
+	do_add_menu_generic_transformers(PitchMode)
+
+	pers_value_edit(3, 3, OctaveLimit, "Octaves +/-", 1, 8, 4, 1, "Octave Limit | Limit the range of pitch to within a certain number of octaves.", 1, "Octave Limit")
+
+	table(3, 4, Pitch, MAX_VOICES, 1, 5, Pitch.TABLE_MAX, Pitch.TEXT_HUD, 1)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Neighborize
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 2, GRID_Y_HUD, NeighborBtn, Neighbor.NAME, "Neighborize | This section deals with borrowing pitches from neighboring keys and pitching them back.", 1, Neighbor.NAME)
+	NeighborBtn->grid_width := 2
+
+	menu(NeighborMode, 2, GRID_Y_HUD+1, "Neighbor Mode | Different modes/algorithms controlling sample borrowing.")
+	add_menu_item(NeighborMode, "- STATIONARY -", -1)
+	add_menu_item(NeighborMode, "Hitchhiker", 1)
+	add_menu_item(NeighborMode, "Monk", 2)
+	add_menu_item(NeighborMode, "", -1)
+	add_menu_item(NeighborMode, "- AUTOPILOTS -", -1)
+	add_menu_item(NeighborMode, "Follow Pitch", 200)
+	add_menu_item(NeighborMode, "Avoidant", 201)
+	do_add_menu_generic_transformers(NeighborMode)
+
+	menu(BorrowDirection, 3, GRID_Y_HUD+1, "Borrow Direction | Whether borrowed samples are always above the played note, below, or either (default).")
+	add_menu_item(BorrowDirection, "Above & Below", 1)
+	add_menu_item(BorrowDirection, "Above Only", 2)
+	add_menu_item(BorrowDirection, "Below Only", 3)
+
+	// TODO : this range is quite jank for automation (lots of values that will do nothing)
+	declare_slider_automaton(NeighborMode, "Neighborstyle", -1, 300)
+
+	table(2, GRID_Y_HUD+2, Neighbor, MAX_VOICES, 2, 6, Neighbor.TABLE_MAX, Neighbor.TEXT_HUD, 1)
+	NeighborTable->bar_color := 973D3A1h
+
+	declare SampleSetupId
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Seek
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 4, GRID_Y_HUD, SeekBtn, Seek.NAME, "Seek | This section deals with changing the sample start position of voices.", 1, Seek.NAME)
+
+	menu(SeekMode, 4, GRID_Y_HUD+1, "Seek Mode | Different modes for controlling the Seek module.")
+	add_menu_item(SeekMode, "- STATIONARY -", -1)
+	add_menu_item(SeekMode, "Static", 1)
+	add_menu_item(SeekMode, "Stripe-It", 2)
+	add_menu_item(SeekMode, "Keystretch", 3)
+	add_menu_item(SeekMode, "Dynamics", 4)
+	add_menu_item(SeekMode, "", -1)
+	add_menu_item(SeekMode, "- AUTOPILOTS -", -1)
+	add_menu_item(SeekMode, "With Delay", 200)
+	do_add_menu_generic_transformers(SeekMode)
+
+	pers_value_edit(4, GRID_Y_HUD+2, SeekStrength, "Strength", 50, 1000, 100, 100, "Seek Strength | The strength of the seek effect at maximum, as a multiple of 0.5 seconds. Go too far and will simply play sample at beginning again.", 0, "")
+
+	table(4, GRID_Y_HUD+3, Seek, MAX_VOICES, 1, 5, Seek.TABLE_MAX, Seek.TEXT_HUD, 1)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Detune
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 4, 1, DetuneBtn, Detune.NAME, "Detune | This section deals with detuning voices.", 1, Detune.NAME)
+
+	menu(DetuneMode, 4, 2, "Detune Mode | Different modes controlling the Detune module.")
+	add_menu_item(DetuneMode, "- STATIONARY -", -1)
+	add_menu_item(DetuneMode, "Static", 1)
+	add_menu_item(DetuneMode, "Stripe-It", 2)
+	add_menu_item(DetuneMode, "Keystretch", 3)
+	add_menu_item(DetuneMode, "Dynamics", 4)
+	do_add_menu_generic_transformers(DetuneMode)
+
+	pers_value_edit(4, 3, DetuneStrength, "Strength", 1, 48, 1, 1, "Detune Strength | The strength of the detune effect at maximum, as a multiple of 25 cents.", 0, "")
+
+	table(4, 4, Detune, MAX_VOICES, 1, 5, Detune.TABLE_MAX, Detune.TEXT_HUD, 1)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Pan
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 5, 1, PanBtn, Pan.NAME, "Pan | This section deals with the pan position of voices.", 1, Pan.NAME)
+
+	menu(PanMode, 5, 2, "Pan Mode | Different modes controlling the Pan module.")
+	add_menu_item(PanMode, "- STATIONARY -", -1)
+	add_menu_item(PanMode, "Static", 1)
+	add_menu_item(PanMode, "Stripe-It", 2)
+	add_menu_item(PanMode, "Keystretch", 3)
+	add_menu_item(PanMode, "Dynamics", 4)
+	add_menu_item(PanMode, "", -1)
+	add_menu_item(PanMode, "- AUTOPILOTS -", -1)
+	add_menu_item(PanMode, "Pitchzipper Out", 200)
+	add_menu_item(PanMode, "Pitchzipper In", 201)
+	do_add_menu_generic_transformers(PanMode)
+
+	pers_value_edit(5, 3, PanStrength, "Strength", 10, 100, 100, 100, "Pan Strength | The strength of the pan value at maximum, as a multiple of full stereo.", 0, "")
+
+	table(5, 4, Pan, MAX_VOICES, 1, 5, Pan.TABLE_MAX, Pan.TEXT_HUD, 1)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Delay
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 6, 1, DelayBtn, Delay.NAME, "Delay | This section deals with delaying voices.", 1, Delay.NAME)
+
+	menu(DelayMode, 6, 2, "Delay Mode | Different modes controlling the Delay module.")
+	add_menu_item(DelayMode, "- STATIONARY -", -1)
+	add_menu_item(DelayMode, "Static", 1)
+	do_add_menu_generic_transformers(DelayMode)
+
+	pers_value_edit(6, 3, DelayStrength, "Strength", 50, 1000, 100, 100, "Delay Strength | The strength of the delay effect at maximum, as a multiple of 0.5 seconds.", 0, "")
+
+	table(6, 4, Delay, MAX_VOICES, 1, 5, Delay.TABLE_MAX, Delay.TEXT_HUD, 1)
+
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Attack
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 5, GRID_Y_HUD, AttackBtn, Attack.NAME, "Attack | This section deals with the fade in time of the voices.", 1, Attack.NAME)
+
+	menu(AttackMode, 5, GRID_Y_HUD+1, "Attack Mode | Different modes for controlling the Attack module.")
+	add_menu_item(AttackMode, "- STATIONARY -", -1)
+	add_menu_item(AttackMode, "Static", 1)
+	add_menu_item(AttackMode, "Stripe-It", 2)
+	add_menu_item(AttackMode, "Keystretch", 3)
+	add_menu_item(AttackMode, "Dynamics", 4)
+	add_menu_item(AttackMode, "", -1)
+	add_menu_item(AttackMode, "- AUTOPILOTS -", -1)
+	add_menu_item(AttackMode, "With Delay", 200)
+	do_add_menu_generic_transformers(AttackMode)
+
+	pers_value_edit(5, GRID_Y_HUD+2, AttackStrength, "Strength", 25, 400, 100, 100, "Attack Strength | The strength of the attack time effect at maximum, as a multiple of 5 seconds", 0, "")
+
+	table(5, GRID_Y_HUD+3, Attack, MAX_VOICES, 1, 5, Attack.TABLE_MAX, Attack.TEXT_HUD, 1)
+
+	////////////////////////////////////////////////////////
+	//
+	//	Module : Release
+	//
+	////////////////////////////////////////////////////////
+
+	declare(pers ui_switch, 6, GRID_Y_HUD, ReleaseBtn, Release.NAME, "Release | This section deals with the fade out time after key release for the voices.", 1, Release.NAME)
+
+	menu(ReleaseMode, 6, GRID_Y_HUD+1, "Release Mode | Different modes for controlling the Release module.")
+	add_menu_item(ReleaseMode, "- STATIONARY -", -1)
+	add_menu_item(ReleaseMode, "Static", 1)
+	add_menu_item(ReleaseMode, "Stripe-It", 2)
+	add_menu_item(ReleaseMode, "Keystretch", 3)
+	add_menu_item(ReleaseMode, "", -1)
+	add_menu_item(ReleaseMode, "- AUTOPILOTS -", -1)
+	add_menu_item(ReleaseMode, "With Delay", 200)
+	do_add_menu_generic_transformers(ReleaseMode)
+
+	pers_value_edit(6, GRID_Y_HUD+2, ReleaseStrength, "Strength", 25, 200, 100, 100, "Release Strength | The strength of the release time effect at maximum, as a multiple of 5 seconds", 0, "")
+
+	table(6, GRID_Y_HUD+3, Release, MAX_VOICES, 1, 5, Release.TABLE_MAX, Release.TEXT_HUD, 1)
+end on
+
+on persistence_changed
+	msg("ntet " & VERSION)
+
+	do_persistence_changed()
+end on
+
+macro do_persistence_changed
+	break_seed(seed_broken)
+	call PolyphonyUpdate
+	Flux_Alpha := pct_to_alpha(Flux)
+
+	do_manage_settings_menu()
+	literate_macro(call #l#BtnUpdate) on Pitch, Neighbor, Detune, Pan, Delay, Seek, Attack, Release
+	literate_macro(do_mode_update_basic(#l#)) on TABLE_NAMES
+	SampleSetup->text := noteName(MinBorrowedNote) & " to " & noteName(MaxBorrowedNote)
+	PlayableSetup->text := noteName(MinPlayableNote) & " to " & noteName(MaxPlayableNote)
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////////
+//
+//  888888888888   db        88888888ba  88          88888888888
+//       88       d88b       88      "8b 88          88
+//       88      d8'`8b      88      ,8P 88          88
+//       88     d8'  `8b     88aaaaaa8P' 88          88aaaaa
+//       88    d8YaaaaY8b    88""""""8b, 88          88"""""
+//       88   d8""""""""8b   88      `8b 88          88
+//       88  d8'        `8b  88      a8P 88          88
+//       88 d8'          `8b 88888888P"  88888888888 88888888888
+//
+//  88888888888                                        88
+//  88                                           ,d    ""
+//  88                                           88
+//  88aaaaa 88       88 8b,dPPYba,   ,adPPYba, MM88MMM 88  ,adPPYba,  8b,dPPYba,  ,adPPYba,
+//  88""""" 88       88 88P'   `"8a a8"     ""   88    88 a8"     "8a 88P'   `"8a I8[    ""
+//  88      88       88 88       88 8b           88    88 8b       d8 88       88  `"Y8ba,
+//  88      "8a,   ,a88 88       88 "8a,   ,aa   88,   88 "8a,   ,a8" 88       88 aa    ]8I
+//  88       `"YbbdP'Y8 88       88  `"Ybbd8"'   "Y888 88  `"YbbdP"'  88       88 `"YbbdP"'
+//
+///////////////////////////////////////////////////////////////////////////////////////////
+
+function ApplyTableFunctions
+	declare i
+	for i := 1 to 9
+		ApplyFunctionToTable(i)
+	end for
+	// do initialization work
+	if (SelectFunction = 0)
+		call InitializePreset
+	end if
+end function
+
+function InitializePreset
+	Seed := 0
+	break_seed(0)
+	TableScalar := 100
+	VoiceMode := 1
+
+	PitchScale := 0
+	SpellMode := 1
+
+	DetuneStrength := 1
+	PanStrength := 100
+	DelayStrength := 100
+	SeekStrength := 100
+	AttackStrength := 100
+	ReleaseStrength := 100
+
+	SettingsMenu := 1
+	do_manage_settings_menu()
+
+	Polyphony[0] := 0.5
+	Polyphony[1] := 0.5
+	call PolyphonyUpdate
+
+	literate_macro(#l#Mode := 1) on Volume, Neighbor, Pitch, Detune, Pan, Delay, Seek, Attack, Release
+
+	literate_macro(#l#Btn := 0)		  on Pitch, Detune, Pan, Delay, Neighbor, Seek, Attack, Release
+	literate_macro(call #l#BtnUpdate) on Pitch, Detune, Pan, Delay, Neighbor, Seek, Attack, Release
+
+	Flux := 0
+	Flux_Alpha := 0.0
+	OctaveLimit := 4
+	DryVolume := 0
+	for i:= 0 to MAX_VOICES - 1
+		literate_macro(#l#Table[i] := 0) on Volume, Pitch, Neighbor, Detune, Pan, Delay, Seek, Attack, Release
+	end for
+	literate_macro(#l#Table[0] := 100) on Volume
+end function
+
+on ui_control(SelectTable)
+	TableScalar := 100
+	SelectTable := max(SelectTable, 0) // all -1s revert to zero (off)
+	TableSelection := SelectTable
+	if (SelectTable = 11)
+		TableSelection := random(1, 9) // Pick Any One
+	end if
+	literate_macro(toggle(#l#, min(1, SelectTable))) on UI_SELECT_TABLE
+end on
+
+on ui_control(ApplyTableFunc)
+	if (SelectFunction > -1)
+		if (TableSelection = 10) // All
+			call ApplyTableFunctions
+		else if (TableSelection # -1 and TableSelection # 0)
+			ApplyFunctionToTable(TableSelection)
+		end if
+	end if
+	ApplyTableFunc := 0
+end on
+
+function ApplyFunctionToTable(s)
+	select(SelectFunction)
+		case 0
+			do_select_table_and_apply(initialize)
+		case 1 // Invert
+			do_select_table_and_apply(invert)
+		case 2 // Reverse
+			do_select_table_and_apply(reverse)
+		case 3 // Randomize
+			randomize_table(s, 1)
+		case 4 // Shuffle
+			do_select_table_and_apply(shuffle)
+		case 5 // Sine
+			do_select_table_and_apply(sine)
+		case 6 // Ramp
+			do_select_table_and_apply(ramp)
+		case 7 // Triangle
+			do_select_table_and_apply(triangle)
+		case 8 // Stripe
+			do_select_table_and_apply(stripe)
+		case 9 // Criss Cross
+			do_select_table_and_apply(invert)
+			do_select_table_and_apply(reverse)
+		case 10 // West n/2
+			select_table_and_offset_a(s, -Voices/2, 0)
+		case 11 // West n
+			select_table_and_offset_a(s, -Voices, 0)
+		case 12 // East n/2
+			select_table_and_offset_a(s, Voices/2, 0)
+		case 13 // East n
+			select_table_and_offset_a(s, Voices, 0)
+		case 14 // North 1/4
+			select_table_and_offset_b(s, 0, 4)
+		case 15 // North 1/3
+			select_table_and_offset_b(s, 0, 3)
+		case 16 // Pulse
+			select_table_and_offset_b(s, 0, 2)
+		case 17 // South 1/4
+			select_table_and_offset_b(s, 0, -4)
+		case 18 // South 1/3
+			select_table_and_offset_b(s, 0, -3)
+		case 19 // Northwest
+			select_table_and_offset_b(s, -1, 1)
+		case 20 // Northeast
+			select_table_and_offset_b(s, 1, 1)
+		case 21 // Southwest
+			select_table_and_offset_b(s, -1, -1)
+		case 22 // Southeast
+			select_table_and_offset_b(s, 1, -1)
+	end select
+end function
+
+// 2D table movement
+function select_table_and_offset_a(s, x, y)
+	select(s)
+		literate_macro(do_partial_case(#l#, table_offset(#l#Table, x, y, #l#.TABLE_MAX, MAX_VOICES - 1))) on TABLE_NAMES
+	end select
+end function
+
+// absolute x value, but identifier for different y calculations.
+function select_table_and_offset_b(s, x, id)
+	select_table_and_offset_a(s, x, 0)
+	declare by := 0
+	select(s)
+		literate_macro(do_partial_case(#l#, do_increment_table(#l#, id))) on TABLE_NAMES
+	end select
+end function
+macro do_increment_table(#prefix#, #id#)
+	select(#id#)
+		case 1
+			by := #prefix#.INC_SIZE
+		case 2
+			by := #prefix#.TABLE_SIZE/2
+		case 3
+			by := #prefix#.TABLE_SIZE/3
+		case 4
+			by := #prefix#.TABLE_SIZE/4
+		case -1
+			by := -#prefix#.INC_SIZE
+		case -3
+			by := -#prefix#.TABLE_SIZE/3
+		case -4
+			by := -#prefix#.TABLE_SIZE/4
+	end select
+	table_increment(#prefix#Table, by, #prefix#.TABLE_MAX, VoiceModMaxVoices - 1)
+end macro
+
+macro do_partial_case(#prefix#, #cmd#)
+	case #prefix#.ENUM
+		#cmd#
+end macro
+
+macro do_select_table_and_apply(#funcSuffix#)
+	select(s)
+		literate_macro(do_partial_case(#l#, table_#funcSuffix#(#l#Table, #l#.TABLE_MAX, Voices - 1))) on TABLE_NAMES
+	end select
+end macro
+
+function randomize_table(s, visibleOnly)
+	declare endAt := VoiceModMaxVoices - 1
+	if (visibleOnly = 1)
+		endAt := Voices - 1
+	end if
+	for i := 0 to endAt
+		select(s)
+			case Volume.ENUM
+				VolumeTable[i] := random(do_get_table_range(Volume))
+			case Pitch.ENUM
+				PitchTable[i] := random(do_get_table_range(Pitch))
+			case Neighbor.ENUM
+				NeighborTable[i] := random(do_get_table_range(Neighbor))
+			case Detune.ENUM
+				DetuneTable[i] := random(do_get_table_range(Detune))
+			case Pan.ENUM
+				PanTable[i] := random(do_get_table_range(Pan))
+			case Delay.ENUM
+				DelayTable[i] := random(0, random(do_get_table_range(Delay)))
+			case Seek.ENUM
+				SeekTable[i] := random(do_get_table_range(Seek))
+				if (random(0, 2) = 0)
+					SeekTable[i] := 0
+				end if
+			case Attack.ENUM
+				AttackTable[i] := random(do_get_table_range(Attack))
+				if (random(0, 2) = 0)
+					AttackTable[i] := 0
+				end if
+			case Release.ENUM
+				ReleaseTable[i] := random(do_get_table_range(Release))
+				if (random(0, 3) = 0)
+					ReleaseTable[i] := 0
+				end if
+		end select
+	end for
+end function
+
+function table_initialize(table, tableMax, endAt)
+	for i := 0 to MAX_VOICES - 1
+		table[i] := 0
+	end for
+end function
+
+function table_shuffle(table, tableMax, endAt) override
+	array_shuffle(table, endAt)
+end function
+
+function table_reverse(table, tableMax, endAt) override
+	array_reverse(table, endAt)
+end function
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+//  888888888888   db        88888888ba  88          88888888888
+//       88       d88b       88      "8b 88          88
+//       88      d8'`8b      88      ,8P 88          88
+//       88     d8'  `8b     88aaaaaa8P' 88          88aaaaa
+//       88    d8YaaaaY8b    88""""""8b, 88          88"""""
+//       88   d8""""""""8b   88      `8b 88          88
+//       88  d8'        `8b  88      a8P 88          88
+//       88 d8'          `8b 88888888P"  88888888888 88888888888
+//
+//    ,ad8888ba,             88 88 88                                88
+//   d8"'    `"8b            88 88 88                                88
+//  d8'                      88 88 88                                88
+//  88            ,adPPYYba, 88 88 88,dPPYba,  ,adPPYYba,  ,adPPYba, 88   ,d8  ,adPPYba,
+//  88            ""     `Y8 88 88 88P'    "8a ""     `Y8 a8"     "" 88 ,a8"   I8[    ""
+//  Y8,           ,adPPPPP88 88 88 88       d8 ,adPPPPP88 8b         8888[      `"Y8ba,
+//   Y8a.    .a8P 88,    ,88 88 88 88b,   ,a8" 88,    ,88 "8a,   ,aa 88`"Yba,  aa    ]8I
+//    `"Y8888Y"'  `"8bbdP"Y8 88 88 8Y"Ybbd8"'  `"8bbdP"Y8  `"Ybbd8"' 88   `Y8a `"YbbdP"'
+//
+////////////////////////////////////////////////////////////////////////////////////////
+
+literate_macro(iterate_macro(on_table_automation(#n#, #l#)) := 0 to MAX_VOICES - 1) on TABLE_NAMES
+
+macro do_on_ui_table(#prefix#)
+	on ui_control(#prefix#Table)
+		do_manage_table_basic(#prefix#)
+	end on
+end macro
+literate_macro(do_on_ui_table(#l#)) on Volume, Neighbor, Detune, Pan, Delay, Seek, Attack, Release
+
+on ui_control(PitchTable)
+	do_manage_table_basic(Pitch)
+	SettingsMenu := 2
+	do_manage_settings_menu()
+end on
+
+macro do_manage_table_basic(#prefix#)
+	iterate_macro(send_table_values_to_automatons(#n#, #prefix#)) := 0 to MAX_VOICES - 1
+	break_seed(1)
+	for i:= 0 to MAX_VOICES - 1
+		#prefix#.cacheTable[i] := #prefix#Table[i]
+	end for
+end macro
+
+////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  88b           d88   ,ad8888ba,   88888888ba,   88 88888888888 88 88888888888 88888888ba
+//  888b         d888  d8"'    `"8b  88      `"8b  88 88          88 88          88      "8b
+//  88`8b       d8'88 d8'        `8b 88        `8b 88 88          88 88          88      ,8P
+//  88 `8b     d8' 88 88          88 88         88 88 88aaaaa     88 88aaaaa     88aaaaaa8P'
+//  88  `8b   d8'  88 88          88 88         88 88 88"""""     88 88"""""     88""""88'
+//  88   `8b d8'   88 Y8,        ,8P 88         8P 88 88          88 88          88    `8b
+//  88    `888'    88  Y8a.    .a8P  88      .a8P  88 88          88 88          88     `8b
+//  88     `8'     88   `"Y8888Y"'   88888888Y"'   88 88          88 88888888888 88      `8b
+//
+//    ,ad8888ba,             88 88 88                                88
+//   d8"'    `"8b            88 88 88                                88
+//  d8'                      88 88 88                                88
+//  88            ,adPPYYba, 88 88 88,dPPYba,  ,adPPYYba,  ,adPPYba, 88   ,d8  ,adPPYba,
+//  88            ""     `Y8 88 88 88P'    "8a ""     `Y8 a8"     "" 88 ,a8"   I8[    ""
+//  Y8,           ,adPPPPP88 88 88 88       d8 ,adPPPPP88 8b         8888[      `"Y8ba,
+//   Y8a.    .a8P 88,    ,88 88 88 88b,   ,a8" 88,    ,88 "8a,   ,aa 88`"Yba,  aa    ]8I
+//    `"Y8888Y"'  `"8bbdP"Y8 88 88 8Y"Ybbd8"'  `"8bbdP"Y8  `"Ybbd8"' 88   `Y8a `"YbbdP"'
+//
+///////////////////////////////////////////////////////////////////////////////////////////
+
+macro do_on_table_offset(#x#, #y#, #dir#)
+	on ui_control(TableOffset#dir#)
+		select (TableSelection)
+			case 1 to 10 // Individual Tables
+				select(TableSelection)
+					literate_macro(do_partial_case(#l#, table_offset(#l#Table, #x#, #y#, #l#.TABLE_MAX, VoiceModMaxVoices - 1))) on TABLE_NAMES
+				end select
+			case 12 // all
+				literate_macro(table_offset(#l#Table, #x#, #y#, #l#.TABLE_MAX, VoiceModMaxVoices - 1)) on TABLE_NAMES
+		end select
+		TableOffset#dir# := 0
+	end on
+end macro
+do_on_table_offset(TableOffsetX, 0, X)
+do_on_table_offset(0, TableOffsetY, Y)
+
+on ui_control(TableScalar)
+	select (TableSelection)
+		case 1 to 10 // Individual Tables
+			select(TableSelection)
+				literate_macro(do_partial_case(#l#, do_scale_table_on_ui_callback(#l#))) on TABLE_NAMES
+			end select
+		case 12 // all
+	end select
+end on
+
+macro do_scale_table_on_ui_callback(#prefix#)
+	for i := 0 to MAX_VOICES - 1
+		if (#prefix#.TABLE_RANGE_X < 0)
+			#prefix#.temp := TableScalar
+		else
+			#prefix#.temp := max(0, TableScalar) //abs(TableScalar)
+		end if
+		if (#prefix#.CURVE # 0)
+			#prefix#.temp_real := curve(#prefix#.CURVE, pct_to_alpha(#prefix#.temp))
+			#prefix#.temp := round_to_int(#prefix#.temp_real * 100.0)
+		end if
+		#prefix#Table[i] := clamp(real_to_int(pct_to_alpha(#prefix#.temp) * int_to_real(#prefix#.cacheTable[i])), do_get_table_range(#prefix#))
+	end for
+end macro
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  88b           d88 88888888888 888b      88 88        88
+//  888b         d888 88          8888b     88 88        88
+//  88`8b       d8'88 88          88 `8b    88 88        88
+//  88 `8b     d8' 88 88aaaaa     88  `8b   88 88        88
+//  88  `8b   d8'  88 88"""""     88   `8b  88 88        88
+//  88   `8b d8'   88 88          88    `8b 88 88        88
+//  88    `888'    88 88          88     `8888 Y8a.    .a8P
+//  88     `8'     88 88888888888 88      `888  `"Y8888Y"'
+//
+//    ,ad8888ba,             88 88 88                                88
+//   d8"'    `"8b            88 88 88                                88
+//  d8'                      88 88 88                                88
+//  88            ,adPPYYba, 88 88 88,dPPYba,  ,adPPYYba,  ,adPPYba, 88   ,d8  ,adPPYba,
+//  88            ""     `Y8 88 88 88P'    "8a ""     `Y8 a8"     "" 88 ,a8"   I8[    ""
+//  Y8,           ,adPPPPP88 88 88 88       d8 ,adPPPPP88 8b         8888[      `"Y8ba,
+//   Y8a.    .a8P 88,    ,88 88 88 88b,   ,a8" 88,    ,88 "8a,   ,aa 88`"Yba,  aa    ]8I
+//    `"Y8888Y"'  `"8bbdP"Y8 88 88 8Y"Ybbd8"'  `"8bbdP"Y8  `"Ybbd8"' 88   `Y8a `"YbbdP"'
+//
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+on ui_control(SelectFunction)
+	if (SelectFunction > -1)
+		msg(tablefunkTooltips[SelectFunction])
+	end if
+end on
+
+on ui_control(SettingsMenu)
+	do_manage_settings_menu()
+
+	select(SettingsMenu)
+		case 1 to 2
+			msg("")
+		case 4
+			msg("Tablefunk | This section is for making 'destructive' edits of the table values for various sections.")
+		case 10
+			call InitializePreset
+			msg("Settings Initialized.")
+		case 11
+			loadpreset_arr_id := load_array(PresetTemp, 0)
+		case 12
+			call save_preset
+			savepreset_arr_id := save_array(PresetTemp, 0)
+	end select
+
+	if (SettingsMenu > 9 or SettingsMenu = -1)
+		SettingsMenu := nTet.prevMenu
+	end if
+end on
+
+macro do_manage_settings_menu()
+	if(in_range(SettingsMenu, 1, 4))
+		literate_macro(hide(#l#)) on UI_NTET, UI_PITCH, UI_TABLEFUNK
+		nTet.prevMenu := SettingsMenu
+	end if
+
+	select(SettingsMenu)
+		case 1
+			literate_macro(show(#l#)) on UI_NTET
+		case 2
+			literate_macro(show(#l#)) on UI_PITCH
+		case 4
+			literate_macro(show(#l#)) on UI_TABLEFUNK
+	end select
+end macro
+
+literate_macro(do_on_automaton(#l#)) on VoiceMode, PitchScale
+
+on ui_control(VoiceMode)
+	VoiceModeAutomaton := VoiceMode
+	call VoicesUpdate
+end on
+
+on ui_control(PitchScale)
+	PitchScaleAutomaton := PitchScale
+
+	select(PitchScale)
+		START_INC(N, 0, 1)
+		literate_macro(do_case(N, msg(#l#))) on "Harmonic Series | The overtone (and theoretical undertone) series.", "Just Circle | Stacked fifths upwards, fourths downwards, in just intonation.", "Just Cycle | Stacked fourths upwards, fifths downwards, in just intonation.", "Standard Guitar | Same intervals you'd find on a standard guitar.", "Octaves", "Fifths & Octaves", "Just Fifths | Stacked fifth intervals in just intonation.", "Just Fourths | Stacked fourth intervals in just intonation.", "Just Pentatonics | Major Pentatonic Scale in just intonation."
+		END_INC
+	end select
+end on
+
+on ui_control(VolumeMode)
+	do_mode_update_basic(Volume)
+	if (VolumeMode = -1)
+		VolumeMode := 1
+	end if
+end on
+
+on ui_control(BorrowDirection)
+	select(BorrowDirection)
+		case 1
+			msg("Above & Below | Borrow samples in both directions (default).")
+		case 2
+			msg("Above Only | Only borrow higher samples (more lofi, boomier)")
+		case 3
+			msg("Below Only | Only borrow lower samples (more tinny, shrill sounding)")
+	end select
+end on
+
+on ui_control(NeighborMode)
+	NeighborModeAutomaton := NeighborMode
+	break_seed(1)
+	select(NeighborMode)
+		do_case(1, msg("Hitchhiker | Borrow samples relative to the played key."))
+		do_case(2, msg("Monk | Borrow samples from an absolute position in the key map."))
+		do_case(200, msg("Follow Pitch | Always use sample closest to actual pitch."))
+		do_case(201, msg("Avoidant | Always use sample at the exact opposite location with the borrow range."))
+	end select
+	do_mode_update_basic(Neighbor)
+	do_get_transformer_tooltips(Neighbor)
+end on
+
+on ui_control(NeighborModeAutomaton)
+	NeighborMode := NeighborModeAutomaton
+end on
+
+macro do_on_ui_mode_basic(#prefix#)
+	on ui_control(#prefix#Mode)
+		do_mode_update_basic(#prefix#)
+		do_get_transformer_tooltips(#prefix#)
+	end on
+end macro
+literate_macro(do_on_ui_mode_basic(#l#)) on Pitch, Detune, Delay, Pan, Seek, Attack, Release
+
+macro do_mode_update_basic(#prefix#)
+	if (#prefix#Mode = -1)
+		#prefix#Mode := 1
+	end if
+	if (#prefix#Mode > 199)
+		#prefix#.inAutopilot := 1
+	else
+		#prefix#.inAutopilot := 0
+		if (#prefix#Btn = 1)
+			set_table_properties(#prefix#Table, #prefix#.TABLE_COLOR, #prefix#.TABLE_COLOR)
+		else
+			set_table_properties(#prefix#Table, TABLE_COLOR_INACTIVE, TABLE_COLOR_INACTIVE)
+		end if
+	end if
+end macro
+
+macro do_get_transformer_tooltips(#prefix#)
+	if (in_range(#prefix#Mode, 100, 199))
+		msg(transformerTooltips[#prefix#Mode - 100] & " on every keypress.")
+	end if
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//  8b           d8  db        88         88        88 88888888888    88888888888 88888888ba,   88 888888888888
+//  `8b         d8' d88b       88         88        88 88             88          88      `"8b  88      88
+//   `8b       d8' d8'`8b      88         88        88 88             88          88        `8b 88      88
+//    `8b     d8' d8'  `8b     88         88        88 88aaaaa        88aaaaa     88         88 88      88
+//     `8b   d8' d8YaaaaY8b    88         88        88 88"""""        88"""""     88         88 88      88
+//      `8b d8' d8""""""""8b   88         88        88 88             88          88         8P 88      88
+//       `888' d8'        `8b  88         Y8a.    .a8P 88             88          88      .a8P  88      88
+//        `8' d8'          `8b 88888888888 `"Y8888Y"'  88888888888    88888888888 88888888Y"'   88      88
+//
+//
+//    ,ad8888ba,             88 88 88                                88
+//   d8"'    `"8b            88 88 88                                88
+//  d8'                      88 88 88                                88
+//  88            ,adPPYYba, 88 88 88,dPPYba,  ,adPPYYba,  ,adPPYba, 88   ,d8  ,adPPYba,
+//  88            ""     `Y8 88 88 88P'    "8a ""     `Y8 a8"     "" 88 ,a8"   I8[    ""
+//  Y8,           ,adPPPPP88 88 88 88       d8 ,adPPPPP88 8b         8888[      `"Y8ba,
+//   Y8a.    .a8P 88,    ,88 88 88 88b,   ,a8" 88,    ,88 "8a,   ,aa 88`"Yba,  aa    ]8I
+//    `"Y8888Y"'  `"8bbdP"Y8 88 88 8Y"Ybbd8"'  `"8bbdP"Y8  `"Ybbd8"' 88   `Y8a `"YbbdP"'
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// for Value Edit and Menu UI, which require automaton ui controls if automation is desired.
+literate_macro(do_on_automaton(#l#)) on DryVolume, Flux, Seed, OctaveLimit
+
+on ui_control(DryVolume)
+	break_seed(1)
+	DryVolumeAutomaton := DryVolume
+end on
+
+function VoicesUpdate
+	if (VoiceMode > 1)
+		PolyphonyTxt->text := "Size: " & VoiceModMinVoices & " to " & VoiceModMaxVoices
+	else
+		PolyphonyTxt->text := "Size: " & Voices
+	end if
+
+	literate_macro(set_table_steps_shown(#l#Table, Voices)) on TABLE_NAMES
+end function
+
+on ui_control(Flux)
+	break_seed(1)
+	Flux_Alpha := pct_to_alpha(Flux)
+	FluxAutomaton := Flux
+
+	if (Flux = 0)
+		Flux->text := "Flux"
+		Flux->font_type := 0
+	end if
+end on
+
+on ui_control(Seed)
+	SeedAutomaton := Seed
+	break_seed(0)
+	call reseed_values
+end on
+
+on ui_control(OctaveLimit)
+	OctaveLimitAutomaton := OctaveLimit
+	break_seed(1)
+end on
+
+///////////////////////////////////////////////////////////////////////////////////////
+//
+//    ,ad8888ba, 888888888888 88        88 88888888888 88888888ba     88        88 88
+//   d8"'    `"8b     88      88        88 88          88      "8b    88        88 88
+//  d8'        `8b    88      88        88 88          88      ,8P    88        88 88
+//  88          88    88      88aaaaaaaa88 88aaaaa     88aaaaaa8P'    88        88 88
+//  88          88    88      88""""""""88 88"""""     88""""88'      88        88 88
+//  Y8,        ,8P    88      88        88 88          88    `8b      88        88 88
+//   Y8a.    .a8P     88      88        88 88          88     `8b     Y8a.    .a8P 88
+//    `"Y8888Y"'      88      88        88 88888888888 88      `8b     `"Y8888Y"'  88
+//
+//    ,ad8888ba,             88 88 88                                88
+//   d8"'    `"8b            88 88 88                                88
+//  d8'                      88 88 88                                88
+//  88            ,adPPYYba, 88 88 88,dPPYba,  ,adPPYYba,  ,adPPYba, 88   ,d8  ,adPPYba,
+//  88            ""     `Y8 88 88 88P'    "8a ""     `Y8 a8"     "" 88 ,a8"   I8[    ""
+//  Y8,           ,adPPPPP88 88 88 88       d8 ,adPPPPP88 8b         8888[      `"Y8ba,
+//   Y8a.    .a8P 88,    ,88 88 88 88b,   ,a8" 88,    ,88 "8a,   ,aa 88`"Yba,  aa    ]8I
+//    `"Y8888Y"'  `"8bbdP"Y8 88 88 8Y"Ybbd8"'  `"8bbdP"Y8  `"Ybbd8"' 88   `Y8a `"YbbdP"'
+//
+////////////////////////////////////////////////////////////////////////////////////////
+
+literate_macro(do_on_ui_control_btn_simple(#l#)) on Neighbor, Detune, Pan, Delay, Seek, Attack, Release
+macro do_on_ui_control_btn_simple(#n#)
+	on ui_control(#n#Btn)
+		break_seed(1)
+		call #n#BtnUpdate
+	end on
+end macro
+
+on ui_control(PitchBtn)
+	call PitchBtnUpdate
+	break_seed(1)
+	SettingsMenu := PitchBtn + 1
+	do_manage_settings_menu()
+end on
+
+literate_macro(do_build_btn_update#l#) on (Neighbor, BorrowDirection), (Pitch, OctaveLimit), (Pan, PanStrength), (Detune, DetuneStrength), (Delay, DelayStrength), (Seek, SeekStrength), (Attack, AttackStrength), (Release, ReleaseStrength)
+macro do_build_btn_update(#n#, #param#)
+	function #n#BtnUpdate
+		do_module_button_update(#n#)
+		if (#n#Btn = 1)
+			#param#->font_type := 0
+		else
+			#param#->font_type := 11
+		end if
+	end function
+end macro
+
+macro do_module_button_update(#n#)
+	if (#n#Btn = 1)
+		#n#Btn->font_type := 0
+		#n#Mode->font_type := 0
+		#n#Btn->text := #n#.NAME & "!"
+		set_table_properties(#n#Table, #n#.TABLE_COLOR, #n#.TABLE_COLOR)
+	else
+		#n#Btn->font_type := 11
+		#n#Mode->font_type := 11
+		#n#Btn->text := #n#.NAME & " (off)"
+		set_table_properties(#n#Table, TABLE_COLOR_INACTIVE, TABLE_COLOR_INACTIVE)
+	end if
+end macro
+
+on ui_control(SampleSetup)
+	if (SampleSetup = 1)
+		SampleSetup->text := "Play Low Key..."
+	else
+		SampleSetup->text := noteName(MinBorrowedNote) & " to " & noteName(MaxBorrowedNote)
+		SampleSetupId := 0
+	end if
+end on
+
+on ui_control(PlayableSetup)
+	if (PlayableSetup = 1)
+		PlayableSetup->text := "Play Low Key..."
+	else
+		PlayableSetup->text := noteName(MinPlayableNote) & " to " & noteName(MaxPlayableNote)
+		PlayableSetupId := 0
+	end if
+end on
+
+on ui_control(Polyphony)
+	break_seed(1)
+	call PolyphonyUpdate
+end on
+
+function PolyphonyUpdate
+	declare a := real_to_int(1.0 + (Polyphony[0] * int_to_real(MAX_VOICES-1)))
+	declare b := real_to_int(1.0 + (Polyphony[1] * int_to_real(MAX_VOICES-1)))
+	VoiceModMinVoices := min(a, b)
+	VoiceModMaxVoices := max(a, b)
+	Voices := VoiceModMaxVoices
+	call VoicesUpdate
+end function
+
+///////////////////////////////////////////////////////////////////////////////////////
+//
+//
+//  888888888888 88        88 88888888888    888888888888 88   ,ad8888ba,  88      a8P
+//       88      88        88 88                  88      88  d8"'    `"8b 88    ,88'
+//       88      88        88 88                  88      88 d8'           88  ,88"
+//       88      88aaaaaaaa88 88aaaaa             88      88 88            88,d88'
+//       88      88""""""""88 88"""""             88      88 88            8888"88,
+//       88      88        88 88                  88      88 Y8,           88P   Y8b
+//       88      88        88 88                  88      88  Y8a.    .a8P 88     "88,
+//       88      88        88 88888888888         88      88   `"Y8888Y"'  88       Y8b
+//
+///////////////////////////////////////////////////////////////////////////////////////
+
+on listener
+	literate_macro(do_manage_blinking_table(#l#)) on Neighbor, Pan, Delay, Seek, Attack, Release
+
+	do_manage_msg(15000)
+
+	if (Flux > 0 and random(1, lerpInt(50, 4, Flux_Alpha)) = 1)
+		Flux->text := !fluxTxts[random(0,9)]
+		Flux->font_type := fluxFonts[random(0, 4)]
+	else
+		Flux->text := "Flux"
+		Flux->font_type := 0
+	end if
+end on
+
+// basic blinking, without conditionals for special modes like With Delay, etc.
+macro do_manage_blinking_table(#prefix#)
+	if (#prefix#.inAutopilot = 1)
+		if (#prefix#Btn = 0)
+			set_table_properties(#prefix#Table, TABLE_COLOR_INACTIVE, TABLE_COLOR_INACTIVE)
+		else
+			if (ENGINE_UPTIME mod 1200 = 0)
+				set_table_properties(#prefix#Table, #prefix#.TABLE_COLOR, #prefix#.TABLE_COLOR)
+				// TODO hacky
+				set_table_steps_shown(#prefix#Table, Voices)
+			else if (ENGINE_UPTIME mod 600 = 0)
+				set_table_properties(#prefix#Table, #prefix#.TABLE_COLOR_BLINK, RGB.WHITE)
+				// TODO hacky
+				set_table_steps_shown(#prefix#Table, Voices)
+			end if
+		end if
+	end if
+end macro
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+//    ,ad8888ba,   888b      88        888b      88   ,ad8888ba, 888888888888 88888888888
+//   d8"'    `"8b  8888b     88        8888b     88  d8"'    `"8b     88      88
+//  d8'        `8b 88 `8b    88        88 `8b    88 d8'        `8b    88      88
+//  88          88 88  `8b   88        88  `8b   88 88          88    88      88aaaaa
+//  88          88 88   `8b  88        88   `8b  88 88          88    88      88"""""
+//  Y8,        ,8P 88    `8b 88        88    `8b 88 Y8,        ,8P    88      88
+//   Y8a.    .a8P  88     `8888        88     `8888  Y8a.    .a8P     88      88
+//    `"Y8888Y"'   88      `888        88      `888   `"Y8888Y"'      88      88888888888
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+
+on note
+	if (PlayableSetup = 1)
+		inc(PlayableSetupId)
+	end if
+
+	if (PlayableSetupId = 1)
+		MinPlayableNote := EVENT_NOTE
+		PlayableSetup->text := "Play Hi Key..."
+	else if (PlayableSetupId = 2)
+		MaxPlayableNote := max(MinPlayableNote, EVENT_NOTE)
+		MinPlayableNote := min(MinPlayableNote, EVENT_NOTE)
+		PlayableSetupId := 0
+		PlayableSetup := 0
+		PlayableSetup->text := noteName(MinPlayableNote) & " to " & noteName(MaxPlayableNote)
+	end if
+
+	if (num_elements(GROUPS_AFFECTED) = 0 and in_range(EVENT_NOTE, MinBorrowedNote, MaxBorrowedNote))
+		msg("You just played a silent key. Your sample range may be too large. (see the General section of the script menu.)")
+	else
+		if (num_elements(GROUPS_AFFECTED) # 0)
+
+			if (SampleSetup = 1)
+				inc(SampleSetupId)
+			end if
+
+			if (SampleSetupId = 1)
+				MinBorrowedNote := EVENT_NOTE
+				SampleSetup->text := "Play Hi Key..."
+			else if (SampleSetupId = 2)
+				MaxBorrowedNote := max(MinBorrowedNote, EVENT_NOTE)
+				MinBorrowedNote := min(MinBorrowedNote, EVENT_NOTE)
+				SampleSetupId := 0
+				SampleSetup := 0
+				SampleSetup->text := noteName(MinBorrowedNote) & " to " & noteName(MaxBorrowedNote)
+			end if
+
+		end if
+
+		// debug.text := ""
+
+		if (in_range(EVENT_NOTE, MinPlayableNote, MaxPlayableNote))
+
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+			//
+			//	Volume Stuff
+			//
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+
+			on_volume := get_event_par(EVENT_ID, EVENT_PAR_VOLUME)
+			// scale volume down with increase in tones.
+			VolumeMod := lerp(1.0, 0.33, int_to_real(Voices)/int_to_real(MAX_VOICES))
+
+			// Dry Signal
+			if (DryVolume = 0)
+				ignore_event(EVENT_ID)
+			else
+				change_vol(EVENT_ID, lerpInt(-48000, on_volume, pct_to_alpha(DryVolume)), 0)
+			end if
+
+			$last_on := EVENT_ID
+
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+			//
+			//	Inject Voice Modes
+			//
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+
+			select(VoiceMode)
+				case 2  // +1
+					Voices := modulo_range(Voices+1, VoiceModMinVoices, VoiceModMaxVoices)
+				case 3  // -1
+					Voices := modulo_range(Voices-1, VoiceModMinVoices, VoiceModMaxVoices)
+				case 4 // wiggle
+					temp_i := random(Voices-1, Voices+1)
+					Voices := clamp(temp_i, VoiceModMinVoices, VoiceModMaxVoices)
+				case 5 // pyramid
+					if (nTet.fwd = 1)
+						Voices := modulo_range(Voices+1, VoiceModMinVoices, VoiceModMaxVoices)
+					else
+						Voices := modulo_range(Voices-1, VoiceModMinVoices, VoiceModMaxVoices)
+					end if
+					if (Voices = VoiceModMaxVoices)
+						nTet.fwd := 0
+					else if (Voices = VoiceModMinVoices)
+						nTet.fwd := 1
+					end if
+				case 6  // d20
+					Voices := random(VoiceModMinVoices, VoiceModMaxVoices)
+				case 7  // Velocity Up
+					Voices := lerpInt(VoiceModMinVoices, VoiceModMaxVoices, int_to_real(EVENT_VELOCITY)/127.0)
+				case 8  // Velocity Down
+					Voices := lerpInt(VoiceModMaxVoices, VoiceModMinVoices, int_to_real(EVENT_VELOCITY)/127.0)
+				case 9  // Keys L to R
+					Voices := mapInt(clamp(EVENT_NOTE, MinPlayableNote, MaxPlayableNote), MinPlayableNote, MaxPlayableNote, VoiceModMinVoices, VoiceModMaxVoices)
+				case 10 // Keys R to L
+					Voices := mapInt(clamp(EVENT_NOTE, MinPlayableNote, MaxPlayableNote), MinPlayableNote, MaxPlayableNote, VoiceModMaxVoices, VoiceModMinVoices)
+	 		end select
+
+	 		call VoicesUpdate
+
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+			//
+			//	Pre-Iteration Table Management
+			//
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+
+			literate_macro(do_select_and_apply_generic_transformers(#l#)) on TABLE_NAMES
+
+			if (DelayBtn # 0)
+				generate_sort_ascending_indices(Voices, DelayTable, Delay.order)
+				Delay.prev := 0
+			end if
+
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+			//
+			//	Iterate Over Voices
+			//
+			///////////////////////////////////////////////////////////////////////////////////////////////////
+
+			for count := 0 to Voices - 1
+
+				if (DelayBtn # 0)
+					index := Delay.order[count]
+				else
+					index := count
+				end if
+
+				///////////////////////////////////////////////////////////////////////////////////////////////////
+				//
+				//	Is Tone Silent ?
+				//
+				///////////////////////////////////////////////////////////////////////////////////////////////////
+
+				if (VolumeTable[index] = 0)
+					tone.silent := 1
+				else
+					tone.silent := 0
+				end if
+
+				///////////////////////////////////////////////////////////////////////////////////////////////////
+				//
+				//	Playback, Calculation and Table Management
+				//
+				///////////////////////////////////////////////////////////////////////////////////////////////////
+
+				// housekeeping if the tone is silent
+				if (tone.silent = 1)
+					literate_macro(do_flush_silent_tone(#l#)) on Pan, Neighbor, Seek, Attack, Release
+				else
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Delay
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (DelayBtn # 0 and DelayTable[index] > 0)
+						if (DelayTable[index] # 0)
+							tone.delay := lerpInt(DelayTable[index], random(0, DelayTable[index]), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.delay := DelayTable[index]
+						end if
+
+						tone.delay := tone.delay - Delay.prev
+						Delay.prev := tone.delay + Delay.prev
+
+						if (tone.delay > 0)
+							// remove two zeroes from 1000 because DelayStrength is alpha * 100
+							wait(tone.delay * 10 * DelayStrength)
+						end if
+					end if
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Pitch
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (PitchTable[index] < 0)
+						pDelta := -1
+					else
+						pDelta := 1
+					end if
+
+					if (SpellMode = 2)
+						pDelta := 1
+					else if (SpellMode = 3)
+						pDelta := -1
+					end if
+
+					// Calculate Harmonic Cents Delta, and Pitch_ID (First Stage)
+					if (PitchBtn = 0)
+						harmonicMillicentsDelta := 0
+						tone.pitch_id := EVENT_NOTE
+					else
+						// get injected index for overtone array. modulo cents through the octave limit
+						Pitch.temp := abs(PitchTable[index])
+
+						select (PitchScale)
+							case 0 // standard (harmonic series)
+								harmonicMillicentsDelta := OVERTONES[Pitch.temp] * 1000
+							case 1 // just fifths up, fourths down
+								if (pDelta = -1)
+									harmonicMillicentsDelta := Pitch.temp*JUST_FOURTH
+								else
+									harmonicMillicentsDelta := Pitch.temp*JUST_FIFTH
+								end if
+							case 2 // just fourths up, fifths down
+								if (pDelta = -1)
+									harmonicMillicentsDelta := Pitch.temp*JUST_FIFTH
+								else
+									harmonicMillicentsDelta := Pitch.temp*JUST_FOURTH
+								end if
+							case 3 // guitar tuning
+								harmonicMillicentsDelta := GUITAR[clamp(Pitch.temp, 0, num_elements(GUITAR) - 1)] * 1000
+							case 4 // octaves
+								harmonicMillicentsDelta := Pitch.temp*1200000
+							case 5 // fifths and octaves
+								if (pDelta = 1)
+									harmonicMillicentsDelta := P5P8[clamp(Pitch.temp, 0, num_elements(P5P8) - 1)]
+								else
+									harmonicMillicentsDelta := P4P8[clamp(Pitch.temp, 0, num_elements(P4P8) - 1)]
+								end if
+							case 6 // just fifths
+								harmonicMillicentsDelta := Pitch.temp*JUST_FIFTH
+							case 7 // just fourths
+								harmonicMillicentsDelta := Pitch.temp*JUST_FOURTH
+							case 8 // just pentatonics
+								harmonicMillicentsDelta := PENTA[clamp(Pitch.temp, 0, num_elements(PENTA) - 1)] * 1000
+						end select
+
+						harmonicMillicentsDelta := harmonicMillicentsDelta mod (1200000 * OctaveLimit)
+						harmonicMillicentsDelta := pDelta * harmonicMillicentsDelta
+						tone.pitch_id := clamp(EVENT_NOTE + (harmonicMillicentsDelta / 100000), 0, 127)
+					end if
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Formant Shift
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (NeighborBtn # 0)
+
+						if (NeighborTable[index] # 0)
+							tone.temp := lerpInt(NeighborTable[index], rand_bi(Neighbor.TABLE_MAX), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.temp := NeighborTable[index]
+						end if
+
+						select (NeighborMode)
+							case 1
+								do_set_relative_shift(tone.temp)
+							case 2
+								do_set_absolute_shift(tone.temp)
+							case 100 to MODE_LAST_ID_TRANSFORMERS
+								do_set_relative_shift(tone.temp)
+							case 200 // Sync w/Pitch
+
+								// temp var prevents inline calc issues on the next line
+								temp_i := real_to_int(floor(millicents_to_semis(harmonicMillicentsDelta)))
+
+								tone.temp := clamp(EVENT_NOTE, MinBorrowedNote, MaxBorrowedNote)
+
+								select(BorrowDirection)
+									case 1
+										tone.note := clamp(EVENT_NOTE + temp_i, MinBorrowedNote, MaxBorrowedNote)
+									case 2 // above only
+										tone.note := clamp(EVENT_NOTE + temp_i, EVENT_NOTE, MaxBorrowedNote)
+									case 3 // below only
+										tone.note := clamp(EVENT_NOTE + temp_i, MinBorrowedNote, EVENT_NOTE)
+								end select
+								// tone.note := clamp(EVENT_NOTE + temp_i, MinBorrowedNote, MaxBorrowedNote)
+
+								tone.transposition := tone.note - EVENT_NOTE
+								// we only need to tune to the decimal remainder, because we've traveled to the desired note already.
+								tone.tune := harmonicMillicentsDelta - (tone.transposition * 100000)
+								// FOR SHOW : Push New Neighbor Value to Table, including effect of variance
+								NeighborTable[index] := clamp(tone.transposition, Neighbor.TABLE_MAX, -Neighbor.TABLE_MAX)
+							case 201 // "Avoidant" aka Mirror Sampling
+
+								// get relative shift value based on harmonics
+								Neighbor.temp := real_to_int(floor(millicents_to_semis(harmonicMillicentsDelta)))
+								// get note+harmonicDelta, represented as a note value
+								Neighbor.temp := clamp(EVENT_NOTE + Neighbor.temp, MinBorrowedNote, MaxBorrowedNote)
+								// get note value's normal position in the sample range
+								Neighbor.temp := Neighbor.temp - MinBorrowedNote
+								// flip the position
+								Neighbor.temp := (MaxBorrowedNote - MinBorrowedNote) - Neighbor.temp
+
+								// put the position back onto the keyboard
+								select(BorrowDirection)
+									case 1
+										tone.note := Neighbor.temp + MinBorrowedNote
+									case 2 // above only
+										tone.note := clamp(Neighbor.temp + MinBorrowedNote, EVENT_NOTE, MaxBorrowedNote)
+									case 3 // below only
+									 	tone.note := clamp(Neighbor.temp + MinBorrowedNote, MinBorrowedNote, EVENT_NOTE)
+								end select
+
+								// remove incoming note to get the transposition (note delta)
+								tone.transposition := tone.note - EVENT_NOTE
+								// we only need to tune to the decimal remainder, because we've traveled to the desired note already.
+								tone.tune := harmonicMillicentsDelta - (tone.transposition * 100000)
+								// FOR SHOW : Push New Neighbor Value to Table, including effect of variance
+								NeighborTable[index] := clamp(tone.transposition, Neighbor.TABLE_MAX, -Neighbor.TABLE_MAX)
+						end select
+					else
+						// we still need to formant shift if we're "off" but outside the sample range.
+						tone.note := clamp(EVENT_NOTE, MinBorrowedNote, MaxBorrowedNote)
+						tone.transposition := EVENT_NOTE - tone.note
+						tone.tune := (tone.transposition * 100000) + harmonicMillicentsDelta
+					end if
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Detune
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (DetuneBtn # 0)
+
+						if (DetuneTable[index] # 0)
+							tone.temp := lerpInt(DetuneTable[index], random(do_get_table_range(Detune)), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.temp := DetuneTable[index]
+						end if
+
+						select (DetuneMode)
+							case 1
+								Detune.temp := tone.temp
+							case 100 to MODE_LAST_ID_TRANSFORMERS
+								Detune.temp := tone.temp
+							case 2 // Tile
+								Detune.temp := DetuneTable[tone.pitch_id mod Voices]
+							case 3 // Map
+								Detune.temp := map_to_keyboard(tone.pitch_id, DetuneTable)
+							case 4 // Dynamics
+								Detune.temp := map_to_velocity(DetuneTable)
+						end select
+
+						Detune.temp := Detune.temp * 1000 * DetuneStrength
+						tone.tune := tone.tune + Detune.temp
+					end if
+
+					// Pitch_ID Stage 2. get "sounding" note, for calc purposes.
+					tone.pitch_id := clamp(tone.note + (tone.tune/100000), 0, 127)
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Volume
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					// no need for zero check here since we already skip those.
+					tone.temp := lerpInt(VolumeTable[index], random(1, 100), Flux_Alpha * NOISE_FACTOR)
+
+					// temp replacement for below
+					tone.volume := tone.temp
+
+					// select (VolumeMode)
+					// 	case 1
+					// 		tone.volume := tone.temp
+					// 	case 100 to MODE_LAST_ID_TRANSFORMERS
+					// 		tone.volume := tone.temp
+					// 	case 2 // Tile (repeat table pattern up the keyboard)
+					// 		tone.volume := VolumeTable[tone.pitch_id mod Voices]
+					// 	case 3 // Map (stretch table pattern across keyboard)
+					// 		tone.volume := map_to_keyboard(tone.pitch_id, VolumeTable)
+					// 		//msg("pitch_id: " & tone.pitch_id & ", real index: " & Volume.temp_real & ", alpha : " & temp_f & ", tone.volume: " & tone.volume)
+					// end select
+
+					if (TamePitches = 1)
+						if (tone.pitch_id > EVENT_NOTE)
+							tone.volume := lerpInt(tone.volume, tone.volume/10, int_to_real(abs(tone.pitch_id - EVENT_NOTE)) / 24.0)
+						else
+							tone.volume := lerpInt(tone.volume, tone.volume/2, int_to_real(abs(tone.pitch_id - EVENT_NOTE)) / 24.0)
+						end if
+					end if
+
+					//debug.text := debug.text & "n/tx/tn:" & noteName(tone.note) & "/" & tone.transposition & "/" & (tone.tune/100000) & ", "
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Pan
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (PanBtn # 0)
+
+						if (PanTable[index] # 0)
+							tone.temp := lerpInt(PanTable[index], rand_bi(100), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.temp := PanTable[index]
+						end if
+
+						select (PanMode)
+							case 1 // Voices
+								tone.pan := tone.temp
+							case 100 to MODE_LAST_ID_TRANSFORMERS
+								tone.pan := tone.temp
+							case 200 to 299 // Autopilot
+								select (PanMode)
+									case 200 // M -> S (KT’d)
+										// get MidTone
+										tone.temp := MinPlayableNote + round_to_int(int_to_real(MaxPlayableNote - MinPlayableNote)/2.0)
+										tone.pan := lerpInt(0, 100, int_to_real(abs(clamp(tone.pitch_id, MinPlayableNote, MaxPlayableNote) - tone.temp)) / int_to_real(MaxPlayableNote - tone.temp))
+										tone.pan := modulo_sign(tone.pitch_id) * tone.pan
+									case 201 // S -> M (KT’d)
+										tone.temp := MaxPlayableNote - MinPlayableNote
+										tone.pan := lerpInt(100, 0, int_to_real(abs(clamp(tone.pitch_id, MinPlayableNote, MaxPlayableNote) - tone.temp)) / int_to_real(MaxPlayableNote - tone.temp))
+										tone.pan := modulo_sign(tone.pitch_id) * tone.pan
+								end select
+								PanTable[index] := clamp(tone.pan, -100, 100) // for show
+							case 2 // Tile (repeat table pattern up the keyboard)
+								tone.pan := PanTable[tone.pitch_id mod Voices]
+							case 3 // Map (stretch table over keyboard based on sounding pitches)
+								tone.pan := map_to_keyboard(tone.pitch_id, PanTable)
+							case 4 // Dynamics
+								tone.pan := map_to_velocity(PanTable)
+						end select
+					else
+						tone.pan := 0
+					end if
+
+					tone.pan := round_to_int(int_to_real(tone.pan) * pct_to_alpha(PanStrength))
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Seek
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (SeekBtn # 0)
+
+						if (SeekTable[index] # 0)
+							tone.temp := lerpInt(SeekTable[index], random(0, Seek.TABLE_MAX), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.temp := SeekTable[index]
+						end if
+
+						select (SeekMode)
+							case 1
+								tone.seek := tone.temp
+							case 2 // tile
+								tone.seek := SeekTable[tone.pitch_id mod Voices]
+							case 3 // map
+								tone.seek := map_to_keyboard(tone.pitch_id, SeekTable)
+							case 4 // Dynamics
+								tone.seek := map_to_velocity(SeekTable)
+							case 100 to MODE_LAST_ID_TRANSFORMERS
+								tone.seek := tone.temp
+							case 200 // sync w/delay
+								tone.seek := real_to_int(int_to_real(DelayTable[index]) / int_to_real(Delay.TABLE_MAX) * int_to_real(Seek.TABLE_MAX))
+								//tone.seek := real_to_int(int_to_real(tone.delay) / int_to_real(Delay.TABLE_MAX) * int_to_real(Seek.TABLE_MAX))
+						end select
+
+						// visualize changes on table if in an Autopilot Mode.
+						if (SeekMode > 199)
+							SeekTable[index] := clamp(tone.seek, 0, Seek.TABLE_MAX)
+						end if
+
+						// apply curve to seek values.
+						Seek.temp_real := curve(50, pct_to_alpha(tone.seek))
+						// strength is alpha * 100, so remove two zeroes from 500000 to compensate.
+						tone.seek := round_to_int(Seek.temp_real * 5000.0) * SeekStrength
+					else
+						tone.seek := 0
+					end if
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Play Note
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					new_event := play_note(tone.note, EVENT_VELOCITY, tone.seek, -1)
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Calculate Attack
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					if (AttackBtn # 0)
+
+						if (AttackTable[index] # 0)
+							tone.temp := lerpInt(AttackTable[index], random(0, Attack.TABLE_MAX), Flux_Alpha * NOISE_FACTOR)
+						else
+							tone.temp := AttackTable[index]
+						end if
+
+						select (AttackMode)
+							case 1
+								tone.fade := tone.temp
+							case 100 to MODE_LAST_ID_TRANSFORMERS
+								tone.fade := tone.temp
+							case 2 // stripe-it (tile)
+								tone.fade := AttackTable[tone.pitch_id mod Voices]
+							case 3 // keystretch (map)
+								tone.fade := map_to_keyboard(tone.pitch_id, AttackTable)
+							case 4 // Dynamics
+								tone.fade := map_to_velocity(AttackTable)
+							case 200 // sync to delay
+								tone.fade := real_to_int(int_to_real(DelayTable[index]) / int_to_real(Delay.TABLE_MAX) * int_to_real(Attack.TABLE_MAX)) //tone.delay
+						end select
+						if (tone.fade # 0)
+							tone.fade := tone.fade
+						end if
+
+						// visualize changes on table if in an Autopilot Mode.
+						if (Attack.inAutopilot = 1)
+							AttackTable[index] := clamp(tone.fade, Attack.TABLE_RANGE_X, Attack.TABLE_RANGE_Y)
+						end if
+
+						if (tone.fade > 0)
+							// remove two zeroes from 1000 because AttackStrength is a percentage, not an alpha.
+							fade_in(new_event, 10 * tone.fade * AttackStrength)
+						end if
+					end if
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Cache Tables (except Release)
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					Volume.cacheTable[index] := VolumeTable[index]
+					Pitch.cacheTable[index] := PitchTable[index]
+					Neighbor.cacheTable[index] := NeighborTable[index]
+					Detune.cacheTable[index] := DetuneTable[index]
+					Pan.cacheTable[index] := PanTable[index]
+					Delay.cacheTable[index] := DelayTable[index]
+					Attack.cacheTable[index] := AttackTable[index]
+					Seek.cacheTable[index] := SeekTable[index]
+
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+					//
+					//	Update Event
+					//
+					///////////////////////////////////////////////////////////////////////////////////////////////////
+
+					// Pass Index and Pitch ID for Release Fun.
+					set_event_par(new_event, EVENT_PAR_0, index)
+					set_event_par(new_event, EVENT_PAR_1, tone.pitch_id)
+					set_event_par(new_event, EVENT_PAR_2, tone.delay)
+
+					change_pan(new_event, tone.pan * 10, 0)
+					change_tune(new_event, get_event_par(EVENT_ID, EVENT_PAR_TUNE) + tone.tune, 0)
+					change_vol(new_event, lerpInt(VOLUME_FLOOR, VOLUME_MAX + on_volume, VolumeMod * pct_to_alpha(tone.volume)), 0)
+					//msg("Note: " & tone.note & ", Tune: " & tone.tune & ", Pan: " & tone.pan & ", Volume: " & tone.volume & ", Attack: " & tone.fade & ", Delay: " & tone.delay & ", Seek: " & tone.seek & ", Release: " & tone.duration)
+				end if
+			end for
+			msg(debug.text)
+		else
+			msg(noteName(EVENT_NOTE) & " is outside the playable range. (You can set the Playable Range in the General section of the settings menu.)")
+		end if
+	end if
+end on
+
+// TEST
+on release
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////
+	//
+	//	Calculate Release
+	//
+	///////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// change Release to 'Release' if digging this !
+
+	if (ReleaseBtn # 0)
+
+		if (EVENT_ID # $last_on)
+
+			ignore_event(EVENT_ID)
+
+			// get index !
+			tone.release_i := get_event_par(EVENT_ID, EVENT_PAR_0)
+			tone.release_pi := get_event_par(EVENT_ID, EVENT_PAR_1)
+			tone.delay := get_event_par(EVENT_ID, EVENT_PAR_2)
+
+			if (ReleaseTable[tone.release_i] # 0)
+				tone.temp := lerpInt(ReleaseTable[tone.release_i], random(0, Release.TABLE_MAX), Flux_Alpha * NOISE_FACTOR)
+			else
+				tone.temp := ReleaseTable[tone.release_i]
+			end if
+
+			select(ReleaseMode)
+				case 1
+					tone.release := tone.temp
+				case 100 to MODE_LAST_ID_TRANSFORMERS
+					tone.release := tone.temp
+				case 2 // tile
+					tone.release := ReleaseTable[tone.release_pi mod Voices]
+				case 3 // map
+					tone.release := map_to_keyboard(tone.release_pi, ReleaseTable)
+				case 200 // sync to delay
+					tone.release := real_to_int(int_to_real(DelayTable[tone.release_i]) / int_to_real(Delay.TABLE_MAX) * int_to_real(Release.TABLE_MAX)) //tone.delay // DelayTable[tone.release_i]
+			end select
+
+			// visualize changes on table if in an Autopilot Mode.
+			if (ReleaseMode > 199)
+				ReleaseTable[tone.release_i] := clamp(tone.release, 0, Release.TABLE_MAX)
+			end if
+
+			Release.cacheTable[tone.release_i] := ReleaseTable[tone.release_i]
+
+			// remove two zeroes from 1000 to compensate for ReleaseStrength being pct not alpha
+			fade_out(EVENT_ID, tone.release * 10 * ReleaseStrength, 1)
+		end if
+	end if
+end on
+
+/////////////////////////////////////////////////////////////////////////////////////////
+//
+//    ,ad8888ba,   888b      88        888b      88   ,ad8888ba, 888888888888 88888888888
+//   d8"'    `"8b  8888b     88        8888b     88  d8"'    `"8b     88      88
+//  d8'        `8b 88 `8b    88        88 `8b    88 d8'        `8b    88      88
+//  88          88 88  `8b   88        88  `8b   88 88          88    88      88aaaaa
+//  88          88 88   `8b  88        88   `8b  88 88          88    88      88"""""
+//  Y8,        ,8P 88    `8b 88        88    `8b 88 Y8,        ,8P    88      88
+//   Y8a.    .a8P  88     `8888        88     `8888  Y8a.    .a8P     88      88
+//    `"Y8888Y"'   88      `888        88      `888   `"Y8888Y"'      88      88888888888
+//
+//  88b           d88
+//  888b         d888
+//  88`8b       d8'88
+//  88 `8b     d8' 88 ,adPPYYba,  ,adPPYba, 8b,dPPYba,  ,adPPYba,  ,adPPYba,
+//  88  `8b   d8'  88 ""     `Y8 a8"     "" 88P'   "Y8 a8"     "8a I8[    ""
+//  88   `8b d8'   88 ,adPPPPP88 8b         88         8b       d8  `"Y8ba,
+//  88    `888'    88 88,    ,88 "8a,   ,aa 88         "8a,   ,a8" aa    ]8I
+//  88     `8'     88 `"8bbdP"Y8  `"Ybbd8"' 88          `"YbbdP"'  `"YbbdP"'
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+
+macro do_select_and_apply_generic_transformers(#prefix#)
+	if (#prefix#Btn = 1 and in_range(#prefix#Mode, 100, 199)) // Transformers
+			select(#prefix#Mode)
+				case 100 // Random
+					randomize_table(#prefix#.ENUM, 1)
+				case 101 // Shuffle
+					array_shuffle(#prefix#Table, Voices - 1)
+				case 102 // Wiggle (+/- 2, zero exclusive)
+					table_offset(#prefix#Table, modulo_sign(randRangeB(1, 2, EVENT_ID))*random(1,2), 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 103 // Wobble (+/- 2 increments, zero exclusive)
+					table_offset(#prefix#Table, 0, modulo_sign(randRangeB(1, 2, EVENT_ID))*#prefix#.INC_SIZE*random(1,2), #prefix#.TABLE_MAX, Voices - 1)
+				case 104  // Flip Flop
+					table_invert(#prefix#Table, #prefix#.TABLE_MAX, Voices - 1)
+				case 105  // Reverse
+					array_reverse(#prefix#Table, Voices - 1)
+				case 106  // Criss Cross
+					table_invert(#prefix#Table, #prefix#.TABLE_MAX, Voices - 1)
+					array_reverse(#prefix#Table, Voices - 1)
+				case 107  // West 1
+					table_offset(#prefix#Table, -1, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 108  // West 2
+					table_offset(#prefix#Table, -2, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 109 // West n/2
+					table_offset(#prefix#Table, -Voices/2, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 110 // West n
+					table_offset(#prefix#Table, -Voices, 0, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+				case 111 // East 1
+					table_offset(#prefix#Table, 1, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 112 // East 2
+					table_offset(#prefix#Table, 2, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 113 // East n/2
+					table_offset(#prefix#Table, Voices/2, 0, #prefix#.TABLE_MAX, Voices - 1)
+				case 114 // East n
+					table_offset(#prefix#Table, Voices, 0, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+				case 115 // North
+					table_offset(#prefix#Table, 0, #prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+				case 116 // North 1/4
+					table_offset(#prefix#Table, 0, #prefix#.TABLE_SIZE/4, #prefix#.TABLE_MAX, Voices - 1)
+				case 117 // North 1/3
+					table_offset(#prefix#Table, 0, #prefix#.TABLE_SIZE/3, #prefix#.TABLE_MAX, Voices - 1)
+				case 118 // Pulse
+					table_offset(#prefix#Table, 0, #prefix#.TABLE_SIZE/2, #prefix#.TABLE_MAX, Voices - 1)
+				case 119 // South
+					table_offset(#prefix#Table, 0, -#prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+				case 120 // South 1/4
+					table_offset(#prefix#Table, 0, -#prefix#.TABLE_SIZE/4, #prefix#.TABLE_MAX, Voices - 1)
+				case 121 // South 1/3
+					table_offset(#prefix#Table, 0, -#prefix#.TABLE_SIZE/3, #prefix#.TABLE_MAX, Voices - 1)
+				case 122 // Northwest
+					table_offset(#prefix#Table, -1, #prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+				case 123 // Northeast
+					table_offset(#prefix#Table, 1, #prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+				case 124 // Southwest
+					table_offset(#prefix#Table, -1, -#prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+				case 125 // Southeast
+					table_offset(#prefix#Table, 1, -#prefix#.INC_SIZE, #prefix#.TABLE_MAX, Voices - 1)
+			end select
+		end if
+end macro
+
+// to ONLY be used in on note iteration
+macro do_flush_silent_tone(#prefix#)
+	if (#prefix#.inAutopilot = 1)
+		#prefix#Table[index] := 0
+	end if
+end macro
+
+// to ONLY be used in on note iteration
+macro do_set_absolute_shift(#x#)
+	// Use Neighbor Table value as a pointer to a constant note within the sample range.
+	temp_i := map(#x#, do_get_table_range(Neighbor), MaxBorrowedNote, MinBorrowedNote)
+
+	tone.temp := clamp(EVENT_NOTE, MinBorrowedNote, MaxBorrowedNote)
+
+	select(BorrowDirection)
+		case 1 // standard
+			tone.note := clamp(temp_i, MinBorrowedNote, MaxBorrowedNote)
+		case 2 // above only
+			tone.note := clamp(temp_i, tone.temp, MaxBorrowedNote)
+		case 3 // below only
+			tone.note := clamp(temp_i, MinBorrowedNote, tone.temp)
+	end select
+
+	tone.transposition := EVENT_NOTE - tone.note
+	// Tune back up from the note transposition, and add harmonic tuning delta
+	tone.tune := (tone.transposition * 100000) + harmonicMillicentsDelta
+end macro
+
+// to ONLY be used in on note iteration.
+macro do_set_relative_shift(#x#)
+
+	temp_i := clamp(EVENT_NOTE, MinBorrowedNote, MaxBorrowedNote)
+
+	select(BorrowDirection)
+		case 1 // standard | we subtract so that formant shift + makes the sound tinnier
+			tone.note := clamp(EVENT_NOTE - #x#, MinBorrowedNote, MaxBorrowedNote)
+		case 2 // above only
+			tone.note := clamp(EVENT_NOTE + abs(#x#), temp_i, MaxBorrowedNote)
+		case 3 // below only
+			tone.note := clamp(EVENT_NOTE - abs(#x#), MinBorrowedNote, temp_i)
+	end select
+
+	tone.transposition := EVENT_NOTE - tone.note
+	// Tune back up from the note transposition, and add harmonic tuning delta
+	tone.tune := (tone.transposition * 100000) + harmonicMillicentsDelta
+end macro
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+//  88b           d88 88  ad88888ba    ,ad8888ba,
+//  888b         d888 88 d8"     "8b  d8"'    `"8b
+//  88`8b       d8'88 88 Y8,         d8'
+//  88 `8b     d8' 88 88 `Y8aaaaa,   88
+//  88  `8b   d8'  88 88   `"""""8b, 88
+//  88   `8b d8'   88 88         `8b Y8,
+//  88    `888'    88 88 Y8a     a8P  Y8a.    .a8P
+//  88     `8'     88 88  "Y88888P"    `"Y8888Y"'
+//
+//	88888888888                                        88
+//	88                                           ,d    ""
+//	88                                           88
+//	88aaaaa 88       88 8b,dPPYba,   ,adPPYba, MM88MMM 88  ,adPPYba,  8b,dPPYba,  ,adPPYba,
+//	88""""" 88       88 88P'   `"8a a8"     ""   88    88 a8"     "8a 88P'   `"8a I8[    ""
+//	88      88       88 88       88 8b           88    88 8b       d8 88       88  `"Y8ba,
+//	88      "8a,   ,a88 88       88 "8a,   ,aa   88,   88 "8a,   ,a8" 88       88 aa    ]8I
+//	88       `"YbbdP'Y8 88       88  `"Ybbd8"'   "Y888 88  `"YbbdP"'  88       88 `"YbbdP"'
+//
+///////////////////////////////////////////////////////////////////////////////////////////
+
+function map_to_keyboard(x, table) -> result
+	// x is pitch_id. map pitch to index approximation as a real #
+	declare p_i := clamp(x, MinPlayableNote, MaxPlayableNote)
+	declare ~real_index := map(int_to_real(p_i), int_to_real(MinPlayableNote), int_to_real(MaxPlayableNote), 0.0, int_to_real(Voices-1))
+
+	// integer index
+	declare i := real_to_int(floor(real_index))
+	// alpha
+	declare ~a := real_index - int_to_real(i)
+
+	if (i = Voices-1)
+		result := table[Voices-1]
+	else
+		result := lerpInt(table[i], table[i+1], a)
+	end if
+end function
+
+function map_to_velocity(table) -> result
+	// x is velocity. map velocity to index approximation as a real #
+	declare ~real_index := map(int_to_real(EVENT_VELOCITY), int_to_real(0), int_to_real(127), 0.0, int_to_real(Voices-1))
+
+	// integer index
+	declare i := real_to_int(floor(real_index))
+	// alpha
+	declare ~a := real_index - int_to_real(i)
+
+	if (i = Voices-1)
+		result := table[Voices-1]
+	else
+		result := lerpInt(table[i], table[i+1], a)
+	end if
+end function
+
+
+/////////////////////////////////////////////////////////////////
+//
+//	 ad88888ba  88888888888 88888888888 88888888ba,    ad88888ba
+//	d8"     "8b 88          88          88      `"8b  d8"     "8b
+//	Y8,         88          88          88        `8b Y8,
+//	`Y8aaaaa,   88aaaaa     88aaaaa     88         88 `Y8aaaaa,
+//	  `"""""8b, 88"""""     88"""""     88         88   `"""""8b,
+//	        `8b 88          88          88         8P         `8b
+//	Y8a     a8P 88          88          88      .a8P  Y8a     a8P
+//	 "Y88888P"  88888888888 88888888888 88888888Y"'    "Y88888P"
+//
+/////////////////////////////////////////////////////////////////
+
+function break_seed(true)
+	seed_broken := true
+	if (seed_broken = 1)
+		Seed->text := "Seed (deviated)"
+	else
+		Seed->text := "Seed"
+	end if
+end function
+
+function reseed_values
+
+	if (Seed = 0)
+		call InitializePreset
+	else
+
+		declare local i
+		declare local temp_i
+
+		seed_counter := 1
+		fade_out(ALL_EVENTS, 5000, 1)
+
+		Flux := rand_seed(0, 100)
+		Flux_Alpha := pct_to_alpha(Flux)
+
+		DryVolume := rand_seed(0, 100)
+
+		//	Reseed Module Buttons
+
+		temp_i := rand_seed(1, 10)
+		if (temp_i < 8)
+			PitchBtn := 1
+		else
+			PitchBtn := 0
+		end if
+
+		temp_i := rand_seed(1, 10)
+		if (temp_i < 8)
+			NeighborBtn := 1
+		else
+			NeighborBtn := 0
+		end if
+
+		literate_macro(#l#Btn := rand_seed(0,1)) on Detune, Pan, Delay, Seek, Attack, Release
+		literate_macro(call #l#BtnUpdate)		 on Pitch, Detune, Pan, Delay, Neighbor, Seek, Attack, Release
+
+		///////////////////////////////////////////////////////////////////////////////////////////////////
+		//
+		//	Reseed Modules
+		//
+		///////////////////////////////////////////////////////////////////////////////////////////////////
+
+		// Ensemble
+
+		temp_i := rand_seed(1, 10)
+		select(temp_i)
+			case 1 to 6
+				VoiceMode := 1
+			case 7 to 8
+				VoiceMode := rand_seed(2, 6) // movement
+			case 8 to 9
+				VoiceMode := rand_seed(7, 10) // velocity and key mappings
+		end select
+
+		temp_i := rand_seed(0,100)
+		Polyphony[0] := int_to_real(temp_i) * 0.01
+		temp_i := rand_seed(0,100)
+		Polyphony[1] := int_to_real(temp_i) * 0.01
+		call PolyphonyUpdate
+
+
+		// Neighborize
+
+		BorrowDirection := rand_seed(1, 3)
+
+		temp_i := rand_seed(1,10)
+		// no point in using a Pitch Sampling Mode (near or farsampling) if Pitch is off !
+		if (in_range(temp_i, 7, 8) and PitchBtn = 0)
+			temp_i := rand_seed(1,2)
+		end if
+		select(temp_i)
+			case 1 to 6
+				NeighborMode := rand_seed(1, 2)
+			case 7 to 8
+				NeighborMode := rand_seed(200,201) // autopilots
+			case 9 to 10
+				NeighborMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+		// VolumeMode
+
+		temp_i := rand_seed(1, 10)
+		select (temp_i)
+			case 1 to 9
+				VolumeMode := 1
+			case 10
+				VolumeMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+
+		// Pitch
+
+		SpellMode := rand_seed(1, 3)
+		OctaveLimit := rand_seed(1, 4)
+		TamePitches := rand_seed(0, 1)
+
+		temp_i := rand_seed(1, 23)
+		select (temp_i)
+			case 1 to 8
+				PitchScale := 0 // Harmonic Series
+			case 9 to 12
+				PitchScale := rand_seed(4,5) // Octaves, Octaves and Fifths
+			case 13 to 17
+				PitchScale := rand_seed(1, 3) // Just Circle/Cycle, Standard Guitar
+			case 18 to 20
+				PitchScale := rand_seed(6, 7) // Just Fifths/Fourths
+			case 20 to 23
+				PitchScale := 8 // Pentatonics
+		end select
+
+		temp_i := rand_seed(1, 100)
+		select (temp_i)
+			case 1 to 90
+				PitchMode := 1
+			case 91 to 100
+				PitchMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+
+		// DetuneMode
+
+		temp_i := rand_seed(1, 10)
+		select (temp_i)
+			case 1 to 9
+				DetuneMode := rand_seed(1, 4)
+			case 10
+				DetuneMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+		// PanMode
+
+		temp_i := rand_seed(1, 10)
+		select(temp_i)
+			case 1 to 8
+				PanMode := rand_seed(1,4)
+			case 9
+				PanMode := rand_seed(200,201) // autopilots
+			case 10
+				PanMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+
+		// DelayMode
+
+		temp_i := rand_seed(1, 10)
+		select(temp_i)
+			case 1 to 9
+				DelayMode := 1
+			case 10
+				DelayMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+
+		// ReleaseMode
+
+		temp_i := rand_seed(1, 10)
+		select(temp_i)
+			case 1 to 8
+				ReleaseMode := rand_seed(1,3)
+			case 9
+				if (DelayBtn # 0)
+					ReleaseMode := 200 // with delay
+				else
+					ReleaseMode := 1
+				end if
+			case 10
+				ReleaseMode := rand_seed(MODE_RANGE_TRANSFORMERS)
+		end select
+
+		// simple mode seeding, 80% 1-3, 10% Sync w/Delay, 10% Generic Transformer
+		literate_macro(do_seed_env_mode(#l#)) on Seek, Attack
+
+		///////////////////////////////////////////////////////////////////////////////////////////////////
+		//
+		//	Reseed Tables
+		//
+		///////////////////////////////////////////////////////////////////////////////////////////////////
+
+		do_reseed_table(Volume,		VolumeTable[i] := rand_seed(do_get_table_range(Volume)), 0, 0)
+		do_reseed_table(Pitch,		PitchTable[i] := rand_seed(do_get_table_range(Pitch)), 1, 1)
+		do_reseed_table(Neighbor,	NeighborTable[i] := rand_seed(do_get_table_range(Neighbor)), 1, 1)
+		do_reseed_table(Detune,		DetuneTable[i] := rand_seed(do_get_table_range(Detune)), 1, 1)
+		do_reseed_table(Pan,		PanTable[i] := rand_seed(do_get_table_range(Pan)), 1, 1)
+		do_reseed_table(Delay,		do_iter_seed_rand_skew_min(Delay), 1, 1)
+		do_reseed_table(Seek,		SeekTable[i] := mod_rand(3, do_get_table_range(Seek)), 1, 1)
+		do_reseed_table(Attack,		AttackTable[i] := mod_rand(3, do_get_table_range(Attack)), 1, 1)
+		do_reseed_table(Release,	ReleaseTable[i] := mod_rand(3, do_get_table_range(Release)), 1, 1)
+	end if
+end function
+
+function print_table(table)
+	declare @txt := ""
+	for i := 0 to num_elements(table)
+		txt := txt & table[i] & ", "
+	end for
+	msg(txt)
+end function
+
+macro do_seed_env_mode(#x#)
+	temp_i := rand_seed(1, 10)
+	select(temp_i)
+		case 1 to 8
+			#x#Mode := rand_seed(1,4)
+		case 9
+			if (DelayBtn # 0)
+				#x#Mode := 200 // with delay
+			else
+				#x#Mode := 1
+			end if
+		case 10
+			#x#Mode := rand_seed(MODE_RANGE_TRANSFORMERS)
+	end select
+end macro
+
+function rand_seed(min, max) -> result
+	if (Seed * seed_counter mod 2 = 0)
+		result := randRangeA(min, max, Seed * seed_counter)
+	else
+		result := randRangeB(min, max, Seed + seed_counter)
+	end if
+	inc(seed_counter)
+end function
+
+function mod_rand(offmax, ui_min, ui_max) -> result
+	declare a := rand_seed(0, offmax)
+	if (a = 0)
+		result := 0
+	else
+		result := rand_seed(ui_min, ui_max)
+	end if
+end function
+
+macro do_iter_seed_rand_skew_min(#prefix#)
+	#prefix#.temp := rand_seed(do_get_table_range(#prefix#))
+	#prefix#Table[i] := rand_seed(0, #prefix#.temp)
+end macro
+
+macro do_reseed_table(#prefix#, #rand_cmd#, #scale#, #doStripe#)
+
+	if (#doStripe# = 0)
+		#prefix#.temp := rand_seed(1,9)
+	else
+		#prefix#.temp := rand_seed(1, 10)
+	end if
+
+	select(#prefix#.temp)
+		case 1 to 6 // 60% chance it's random.
+			for i := 0 to (MAX_VOICES - 1)
+				#rand_cmd#
+			end for
+		case 7
+			table_ramp(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+		case 8
+			table_triangle(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+		case 9
+			table_sine(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+		case 10
+			table_stripe(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+	end select
+	// 1 in 5 chance to flip, reverse, shuffle, or pulse
+	#prefix#.temp := rand_seed(1, 5)
+	select(#prefix#.temp)
+		case 1
+			table_invert(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+		case 2
+			table_reverse(#prefix#Table, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+		case 3
+			array_shuffle_seeded(#prefix#Table, MAX_VOICES - 1, Seed * seed_counter)
+			inc(seed_counter)
+		case 4
+			table_offset(#prefix#Table, 0, #prefix#.TABLE_SIZE/2, #prefix#.TABLE_MAX, MAX_VOICES - 1)
+	end select
+
+	// seed either way.
+	if (#scale# = 1)
+		// apply random scaling to the values for more variety.
+		#prefix#.temp := rand_seed(0, 200)
+		for i:= 0 to (MAX_VOICES - 1)
+			#prefix#Table[i] := clamp(round_to_int(int_to_real(#prefix#Table[i]) * pct_to_alpha(#prefix#.temp)), do_get_table_range(#prefix#))
+			#prefix#.cacheTable[i] := #prefix#Table[i]
+		end for
+	else
+		for i:= 0 to (MAX_VOICES - 1)
+			#prefix#.cacheTable[i] := #prefix#Table[i]
+		end for
+	end if
+
+	// prevent totally empty tables.
+	temp_i := 0
+	i := 0
+	while (temp_i = 0 and i < Voices)
+		temp_i := #prefix#Table[i] + temp_i
+		inc(i)
+	end while
+	if (temp_i = 0)
+		#prefix#Table[0] := #prefix#.TABLE_RANGE_Y
+		#prefix#.cacheTable[0] := #prefix#Table[0]
+	end if
+end macro
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//
+//  88b           d88 88  ad88888ba    ,ad8888ba,
+//  888b         d888 88 d8"     "8b  d8"'    `"8b
+//  88`8b       d8'88 88 Y8,         d8'
+//  88 `8b     d8' 88 88 `Y8aaaaa,   88
+//  88  `8b   d8'  88 88   `"""""8b, 88
+//  88   `8b d8'   88 88         `8b Y8,
+//  88    `888'    88 88 Y8a     a8P  Y8a.    .a8P
+//  88     `8'     88 88  "Y88888P"    `"Y8888Y"'
+//
+//  88b           d88
+//  888b         d888
+//  88`8b       d8'88
+//  88 `8b     d8' 88 ,adPPYYba,  ,adPPYba, 8b,dPPYba,  ,adPPYba,  ,adPPYba,
+//  88  `8b   d8'  88 ""     `Y8 a8"     "" 88P'   "Y8 a8"     "8a I8[    ""
+//  88   `8b d8'   88 ,adPPPPP88 8b         88         8b       d8  `"Y8ba,
+//  88    `888'    88 88,    ,88 "8a,   ,aa 88         "8a,   ,a8" aa    ]8I
+//  88     `8'     88 `"8bbdP"Y8  `"Ybbd8"' 88          `"YbbdP"'  `"YbbdP"'
+//
+//////////////////////////////////////////////////////////////////////////////////////////
+
+define MODE_LAST_ID_TRANSFORMERS := 125
+define MODE_RANGE_TRANSFORMERS := 100, MODE_LAST_ID_TRANSFORMERS
+
+macro do_add_menu_generic_transformers(#ui#)
+	// give these high IDs, so they're out of the way.
+	add_menu_item(#ui#, "", -1)
+	add_menu_item(#ui#, "- DESTRUCTIVE -", -1)
+	START_INC(I, 100, 1)
+	literate_macro(add_menu_item(#ui#, #l#, I)) on "Random", "Shuffle", "Wiggle", "Wobble", "Flip Flop", "Reverse", "Criss Cross", "West 1", "West 2", "West n/2", "West n", "East 1", "East 2", "East n/2", "East n", "North", "North 1/4", "North 1/3", "Pulse", "South", "South 1/4", "South 1/3", "Northwest", "Northeast", "Southwest", "Southeast"
+	END_INC
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////
+//
+//	88888888ba  88888888ba  88888888888 ad88888ba  88888888888 888888888888 ad88888ba
+//	88      "8b 88      "8b 88         d8"     "8b 88               88     d8"     "8b
+//	88      ,8P 88      ,8P 88         Y8,         88               88     Y8,
+//	88aaaaaa8P' 88aaaaaa8P' 88aaaaa    `Y8aaaaa,   88aaaaa          88     `Y8aaaaa,
+//	88""""""'   88""""88'   88"""""      `"""""8b, 88"""""          88       `"""""8b,
+//	88          88    `8b   88                 `8b 88               88             `8b
+//	88          88     `8b  88         Y8a     a8P 88               88     Y8a     a8P
+//	88          88      `8b 88888888888 "Y88888P"  88888888888      88      "Y88888P"
+//
+///////////////////////////////////////////////////////////////////////////////////////
+
+
+// DO NOT CHANGE ORDER, WILL BREAK BACKWARDS COMPATIBILITY FOR PRESETS !
+define PRESET_VARS := MinBorrowedNote, MaxBorrowedNote, MinPlayableNote, MaxPlayableNote, Voices, Flux, DryVolume, VoiceMode, VoiceModMinVoices, VoiceModMaxVoices, OctaveLimit, TamePitches, PitchScale, DetuneStrength, DelayStrength, SeekStrength, AttackStrength, ReleaseStrength, SpellMode, BorrowDirection
+
+function save_preset
+	START_INC(N, 0, 1)
+	literate_macro(iterate_macro(PresetTemp[N] := #l#Table[#n#]) := 0 to (MAX_VOICES - 1)) on TABLE_NAMES
+	literate_macro(PresetTemp[N] := #l#Btn) on TABLE_NAMES
+	literate_macro(PresetTemp[N] := #l#Mode) on TABLE_NAMES
+	literate_macro(PresetTemp[N] := #l#) on PRESET_VARS
+	END_INC
+end function
+
+function load_preset
+	START_INC(N, 0, 1)
+	literate_macro(iterate_macro(#l#Table[#n#] := PresetTemp[N]) := 0 to (MAX_VOICES - 1)) on TABLE_NAMES
+	literate_macro(#l#Btn := PresetTemp[N]) on TABLE_NAMES
+	literate_macro(#l#Mode := PresetTemp[N]) on TABLE_NAMES
+	literate_macro(#l# := PresetTemp[N]) on PRESET_VARS
+	END_INC
+
+	do_persistence_changed()
+	msg("Preset Loaded.")
+end function
+
+on async_complete
+	if (NI_ASYNC_ID = loadpreset_arr_id)
+		loadpreset_arr_id := -1
+		if (NI_ASYNC_EXIT_STATUS = 1)
+			call load_preset
+		end if
+	end if
+	if (NI_ASYNC_ID = savepreset_arr_id)
+		savepreset_arr_id := -1
+		msg("Preset Saved.")
+	end if
+end on

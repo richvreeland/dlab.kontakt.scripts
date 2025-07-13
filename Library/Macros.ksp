@@ -1,0 +1,329 @@
+{
+	    _  __ _  _  __
+	|V||_|/  |_)/ \(_
+	| || |\__| \\_/__)
+
+}
+
+// FONTS
+
+	// does not work for knobs ?
+
+	// 0 : Pixel
+	// 1 : Sans
+	// 2 : Pixel, Dark Dark Grey
+	// 3 : Pixel, Grey
+	// 4 : Pixel, Yellow
+	// 5 : Sans, Yellow
+	// 6 : Pixel, Red
+	// 7 : Sans, Red
+	// 8 : Pixel, Dark Grey
+	// 9 : Pixel, Black
+	// 10: Pixel, Light Grey
+	// 11: Pixel, Another Grey
+	// 12: Sans Small, Black
+	// 13: Sans Small, Light Blue
+	// 14: Sans Small, Grey
+	// 15: Sans Small, Dark Grey
+	// 16: Sans Narrow Small, Black
+	// 17: Sans Narrow Small, White
+	// 18: Sans Small, White
+	// 19: Sans, Black
+	// 20: Sans, Grey
+	// 21: Sans Narrow, Grey
+	// 22: Sans Narrow, Black
+	// 23: Sans Narrow, Grey
+	// 24: Sans Small, White
+	// 25: Sans Small, Light Blue
+
+// lowest volume before silence, in millidecibels
+define VOLUME_MAX := 0
+define VOLUME_FLOOR := -24000
+
+define GRID_TO_PX_X := 90
+define GRID_TO_PX_Y := 22
+define PX_X_OFFSET := -25
+define PX_Y_OFFSET := -25
+
+define AUTOMATION_BASE_ID_NTET := 200
+define AUTOMATION_BASE_ID_TILE := 300
+define AUTOMATION_BASE_ID_NEIGHBORS := 400
+define AUTOMATION_BASE_ID_PB_N_JAM := 500
+define AUTOMATION_BASE_ID_SEEDER := 600
+define AUTOMATION_BASE_ID_SHUFFLER := 700
+define AUTOMATION_BASE_ID_PANHANDLER := 800
+define AUTOMATION_BASE_ID_STAGEMAGE := 900
+define AUTOMATION_BASE_ID_PLAYTHRU := 1000
+
+macro boilerplate(#name#, #version#, #ui_height#, #automation_base_id#)
+	set_script_title(#name#)
+	make_perfview
+	set_skin_offset(100000)
+	set_ui_height(#ui_height#)
+
+	const UI
+		HIDE := HIDE_WHOLE_CONTROL
+		SHOW := HIDE_PART_NOTHING
+	end const
+
+	// color wheel, for iteration/etc
+	const RGB
+		RED    := 9FF0000h
+		ORANGE := 9FF8000h
+		YELLOW := 9FFFF00h
+		GREEN  := 900FF00h
+		BLUE   := 90000FFh
+		VIOLET := 9EE82EEh
+		WHITE  := 9FFFFFFh
+		BLACK  := 9000000h
+	end const
+
+	declare !ROOT[12] := ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+	declare const AUTOMATION_BASE_ID := #automation_base_id#
+	declare automation_counter := 0
+
+	family status
+		declare timestamp := 0
+		declare dirty := 0
+	end family
+
+	msg(#name# & " " & #version#)
+end macro
+
+// Manage the msg function, which can expire. To be run on listener .
+macro do_manage_msg(rate)
+	// periodically reset the status bar
+	if ((ENGINE_UPTIME - status.timestamp) mod rate = 0 and status.dirty = 1)
+		message("")
+		status.dirty := 0
+	end if
+end macro
+
+////////////////////////////////////////////////////////
+//
+//	Variable and UI Declarations
+//
+////////////////////////////////////////////////////////
+
+macro table(#grid_x#, #grid_y#, #name#, #columns#, #width#, #height#, #maxValue#, #helpTxt#, #automate#)
+	declare pers ui_table #name#Table[#columns#] (#width#,#height#,#maxValue#)
+	#name#Table->grid_width := #width#
+	//#name#Table->width := (#width#) * GRID_TO_PX_X
+	//#name#Table->height := (#height#) * GRID_TO_PX_Y
+	#name#Table->help := #helpTxt#
+	move(#name#Table, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		iterate_macro(declare_table_automatons(#n#, #name#, #maxValue#)) := 0 to (#columns# - 1)
+	end if
+end macro
+
+macro xy(#name#, #cursors#, #grid_x#, #grid_y#, #grid_width#, #grid_height#, #helpTxt#)
+	declare pers ui_xy ?#name#[#cursors#*2]
+	#name#->grid_x := #grid_x#
+	#name#->grid_y := #grid_y#
+	#name#->grid_width := #grid_width#
+	#name#->grid_height := #grid_height#
+	#name#->help := #helpTxt#
+end macro
+
+macro button(#grid_x#, #grid_y#, #default#, #name#, #text#, #helpTxt#, #automate#, #automationName#)
+	declare ui_button #name#
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	#name# := #default#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		declare_slider_automaton(#name#, #automationName#, 0, 1)
+	end if
+end macro
+
+macro pers_button(#grid_x#, #grid_y#, #default#, #name#, #text#, #helpTxt#, #automate#, #automationName#)
+	declare pers ui_button #name#
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	#name# := #default#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		declare_slider_automaton(#name#, #automationName#, 0, 1)
+	end if
+end macro
+
+macro declare(#declarationType#, #grid_x#, #grid_y#, #name#, #text#, #helpTxt#, #automate#, #automationName#)
+	declare #declarationType# #name#
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		set_automation(#name#, #automationName#)
+	end if
+end macro
+
+macro label(#grid_x#, #grid_y#, #name#, #text#, #width#, #height#, #helpTxt#)
+	declare ui_label #name#(#width#, #height#)
+	move(#name#, #grid_x#, #grid_y#)
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+end macro
+
+// menu IDs start at 1.
+macro menu(#grid_x#, #grid_y#, #name#, #default#, #helpTxt#, #strings#, #automationName#)
+	declare pers ui_menu #name#
+	#name#->help := #helpTxt#
+	declare #name#_i
+	for #name#_i := 1 to #strings#.SIZE
+		add_menu_item(#name#, #strings#[#name#_i-1], #name#_i)
+	end for
+	#name# := #default#
+	move(#name#, #grid_x#, #grid_y#)
+	slider(0, 0, #name#Automaton, 1, #strings#.SIZE, #default#, "", 1, #automationName#)
+end macro
+
+macro knob(#grid_x#, #grid_y#, #name#, #text#, #min#, #max#, #default#, #helpTxt#, #automate#, #automationName#)
+	declare pers ui_knob #name# (#min#, #max#, 1)
+	set_ui_default(#name#, #default#)
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		set_automation(#name#, #automationName#)
+	end if
+end macro
+
+macro pers_note(#grid_x#, #grid_y#, #name#, #default#, #text#, #helpTxt#)
+	declare pers ui_value_edit #name# (0,127, $VALUE_EDIT_MODE_NOTE_NAMES)
+	set_ui_default(#name#, #default#)
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		declare_slider_automaton(#name#, #automationName#, 0, 127)
+	end if
+end macro
+
+macro pers_slider(#grid_x#, #grid_y#, #name#, #min#, #max#, #default#, #helpTxt#, #automate#, #automationName#)
+	declare pers ui_slider #name# (#min#, #max#)
+	set_ui_default(#name#, #default#)
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		set_automation(#name#, #automationName#)
+	end if
+end macro
+
+macro slider(#grid_x#, #grid_y#, #name#, #min#, #max#, #default#, #helpTxt#, #automate#, #automationName#)
+	declare ui_slider #name# (#min#, #max#)
+	set_ui_default(#name#, #default#)
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		set_automation(#name#, #automationName#)
+	end if
+end macro
+
+// if using automation, you still have to call do_on_automaton.
+macro pers_value_edit(#grid_x#, #grid_y#, #name#, #text#, #min#, #max#, #default#, #displayRatio#, #helpTxt#, #automate#, #automationName#)
+	declare pers ui_value_edit #name#(#min#, #max#, #displayRatio#)
+	#name# := #default#
+	#name#->text := #text#
+	#name#->help := #helpTxt#
+	move(#name#, #grid_x#, #grid_y#)
+	if (#automate# = 1)
+		declare_slider_automaton(#name#, #automationName#, #min#, #max#)
+	end if
+end macro
+
+// width is 1 or 2
+macro pers_slider_bipolar(#grid_x#, #grid_y#, #name#, #max#, #default#, #helpTxt#, #automate#, #automationName#, #width#)
+	pers_slider(#grid_x#, #grid_y#, #name#, -abs(#max#), abs(#max#), #default#, #helpTxt#, #automate#, #automationName#)
+	#name#->picture := "K4_SLIDER_BIP_#width#"
+end macro
+
+macro slider_bipolar(#grid_x#, #grid_y#, #name#, #max#, #default#, #helpTxt#, #automate#, #automationName#, #width#)
+	slider(#grid_x#, #grid_y#, #name#, -abs(#max#), abs(#max#), #default#, #helpTxt#, #automate#, #automationName#)
+	#name#->picture := "K4_SLIDER_BIP_#width#"
+end macro
+
+////////////////////////////////////////////////////////
+//													  //
+//	User Interface									  //
+//													  //
+////////////////////////////////////////////////////////
+
+macro set_ui_default(#name#, #default#)
+	#name# := #default#
+	#name#->default := #default#
+end macro
+
+macro hide(#ui_element#)
+	#ui_element#->hide := HIDE_WHOLE_CONTROL
+end macro
+
+macro show(#ui_element#)
+	#ui_element#->hide := HIDE_PART_NOTHING
+end macro
+
+macro toggle(#ui_element#, #show#)
+	#ui_element#->hide := (1-#show#) * 16
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Automation
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Value Edits / Menus
+
+macro declare_slider_automaton(#n#, #automationName#, #min#, #max#)
+	slider(0, 0, #n#Automaton, #min#, #max#, #min#, "", 1, #automationName#)
+end macro
+
+macro do_on_automaton(#n#)
+	on ui_control(#n#Automaton)
+		#n# := #n#Automaton
+		//message("#n#Automaton: " & #n#)
+	end on
+end macro
+
+// Tables
+
+// hidden sliders that we'll use to relay automation from the DAW to a ui table.
+// note : these will only receive automation, not send it.
+// only UI that is directly controlled by the user sends its data to the DAW.
+macro declare_table_automatons(#n#, #prefix#, #max#)
+	slider(0, 0, #prefix#Table_#n#, min(#max#, 0), abs(#max#), 0, "", 1, "#prefix#Table-Column#n#")
+end macro
+
+// callbacks for table automatons
+macro on_table_automation(#n#, #prefix#)
+	on ui_control(#prefix#Table_#n#)
+		#prefix#Table[#n#] := #prefix#Table_#n#
+		message("#prefix#Table[#n#]: " & #prefix#Table_#n#)
+	end on
+end macro
+
+// for updating automatons with table values, generally inside of table ui_control callbacks.
+// these don't make it to the DAW, but keeping automatons 1:1 with their UI counterparts is desirable.
+macro send_table_values_to_automatons(#n#, #prefix#)
+	#prefix#Table_#n# := #prefix#Table[#n#]
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Flow Control
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+macro do_case(#case#, #cmd#)
+	case #case#
+		#cmd#
+end macro
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Events
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+define print_event(e) := message("Note: " & e->note & ", Tune: " & e->tune & ", Pan: " & e->pan & ", Volume: " & e->volume)
