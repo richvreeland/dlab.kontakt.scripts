@@ -8,8 +8,8 @@ If you intend to embed these designs/code in a commercial context or game, pleas
 
 ## Directory
 
-### 🍱 [ntet](scripts/ntet.ksp)
+### 🍱 [ntet](ntet/)
 A multisample ensembler.
 
-### 🐏 [panoram](scripts/panoram.ksp)
+### 🐏 [panoram](panoram/)
 A novelty panner.
