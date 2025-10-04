@@ -1,0 +1,949 @@
+// borrow neighboring samples in different ways.
+// by dlab
+// compatibility : Kontakt 7 (tested in 7.10.6)
+
+define TITLE := "Neighbors"
+define VERSION := "v1.00"
+
+import "../Library/Macros.ksp"
+import "../Library/Functions.ksp"
+
+on init
+
+	{#pragma save_compiled_source /Users/r/Documents/Native Instruments/Kontakt 7/scripts/neighbors.txt}
+	boilerplate(TITLE, VERSION, 3, AUTOMATION_BASE_ID_NEIGHBORS)
+
+	family tone
+		declare note
+		declare polyphonic transposition
+		declare polyphonic fate
+		declare polyphonic unisons
+	end family
+
+	define HUD_CHAR_EMPTY := " "
+	define HUD_CHAR_BOUND := "."
+	define HUD_CHAR_NOTE  := "|"
+	define HUD_CHAR_OOB := "X"
+
+	declare !hudNotesDry[128] := (HUD_CHAR_EMPTY)
+	declare !hudNotesWet[128] := (HUD_CHAR_EMPTY)
+	declare @txt
+	declare polyphonic new_event
+
+	//
+
+	define UI_GLOBALS := ModeTxt, Mode, Mix, HUD
+	define UI_SETUP := MapLo, MapHi
+	define UI_HONKY_TONK := Age, Seed, Randomize
+	define UI_SHIFT := Timbre, Advanced
+	define UI_ADVANCED := StagingTxt, PreDelay, Voices, MapSize, DifferentiateModeTxt, DifferentiateMode, Seed, FateTxt, ShiftFate, DelayFate, DetuneFate, FluxTxt, ShiftFlux, DelayFlux, DetuneFlux, ShiftFluxTxt, DetuneFluxTxt, DelayFluxTxt
+	define UI_PATTERNS := PatternTxt, PatternMode, PatternLimit, PatternGait, PitchMap, VelocityMap
+
+	define UI_ALL := UI_GLOBALS, UI_SETUP, UI_HONKY_TONK, UI_SHIFT, UI_ADVANCED, UI_PATTERNS, Location, MapSize
+
+	// Globals
+
+	const _MODE
+		START_INC(N, 1, 1)
+		literate_post_macro(#l# := N) on Setup, Tile, HonkyTonk, Shift, Patterns
+		END_INC
+	end const
+
+	label(1, 1, ModeTxt, "Mode", 1, 1, "")
+	declare !mStrings[] := ("Setup", "Tile", "Honky Tonk", "Shift", "Patterns")
+	menu(1, 2, Mode, 2, "Mode | Which mode to operate in.", mStrings, "Mode")
+
+	define HUD_LO_SMALL := 25
+	define HUD_HI_SMALL := 100
+	define HUD_LO_LARGE := 0
+	define HUD_HI_LARGE := 127
+	declare hud_lo
+	declare hud_hi
+	label(2, 1, HUD, "", 4, 2, "This is the HUD for displaying incoming note information.")
+
+	// Shared
+
+	pers_button(1, 6, 0, Bypass, "Bypass", "Bypass | Disable the script.", 1, "Bypass")
+	pers_value_edit(0, 0, Seed, "Model #", 1, 9999, 1, 1, "Model | Pick a different instrument model.", 1, "Model")
+	declare seed_index
+	declare i
+
+	// Setup
+
+	pers_value_edit(1, 3, MapLo, "Map Lo", 0, 127, 36, VALUE_EDIT_MODE_NOTE_NAMES, "Lowest Note in Sample Map", 1, "Setup: Map Lo")
+	pers_value_edit(1, 4, MapHi, "Map Hi", 0, 127, 97, VALUE_EDIT_MODE_NOTE_NAMES, "Highest Note in Sample Map", 1, "Setup: Map Hi")
+
+	// Tile
+
+	knob(1, 3, Location, "Location", 0, 100, 0, "Location | What part of the sample map to use.", 1, "Tile: Location %")
+	Location->unit := KNOB_UNIT_PERCENT
+
+	// Honky Tonk
+
+	pers_value_edit(1, 3, Age, "Age", 0, 100, 25, 1, "Age | How old is the instrument?", 1, "Honky Tonk: Age")
+	declare ~alphaAge
+
+	declare(pers ui_switch, 1, 5, Randomize, "Randomize", "", 0, "")
+
+	// Shift & Patterns
+
+		// General Settings
+
+		label(6, 1, StagingTxt, "Staging", 1, 1, "Staging | Settings related to the relationship between the dry and wet signal.")
+
+		knob(6, 2, Mix, "Mix", 0, 100, 100, "Mix | How much dry vs. wet signal.", 1, "Mix (%)")
+		Mix->unit := KNOB_UNIT_PERCENT
+		declare DryMix
+		declare WetMix
+		declare ~alphaMix
+
+		knob(6, 4, Voices, "Voices", 1, 16, 1, "Voices | How many voices per key played.", 1, "Voices")
+
+		pers_value_edit(6, 6, PreDelay, "Delay ms", 0, 2000, 0, 1, "Wet Delay | How much to delay the wet signal.", 1, "Wet Delay (ms)")
+
+		knob(1, 3, Timbre, "Timbre", -48, 48, 0, "Timbre | How many semitones away from the played note we should borrow a sample from.", 1, "Timbre (st)")
+		Timbre->unit := KNOB_UNIT_ST
+
+		pers_value_edit(1, 5, MapSize, "Map Size", 0, 100, 100, 100, "Map Size | What percentage of the sample map to use.", 1, "Map Size (%)")
+		declare ~alphaMapSize
+		declare MapMid
+		declare MapLoMod
+		declare MapHiMod
+		const MAP
+			LO := 1
+			HI := 2
+			PLAYED := 3
+			RANDOM := 4
+		end const
+
+		// Shift Only
+
+		pers_button(0, 0, 0, Advanced, "Advanced", "Advanced | Reveal more advanced settings.", 1, "Shift: Advanced")
+
+		// Patterns
+
+		const _PATTERN
+			START_INC(N, 1, 1)
+			literate_post_macro(#l# := N) on Walk, SeededWalk, VelocityMap, PitchMap
+			END_INC
+		end const
+
+		label(2, 3, PatternTxt, "Pattern", 1, 1, "Pattern Mode | Which pattern mode to use.")
+
+		declare !pModeStrings[] := ("Walk", "Seeded Walk", "Velocity Map", "Pitch Map")
+		menu(2, 4, PatternMode, 1, "Pattern Mode | Which pattern mode to use.", pModeStrings, "Patterns: Mode")
+		pers_value_edit(2, 5, PatternLimit, "Limit", 0, 48, 4, 1, "Limit | how long the cycle should go before repeating.", 1, "Patterns: Limit")
+
+		pers_value_edit(2, 6, PatternGait, "Gait", -24, 24, 1, 1, "Gait | how far to move along the sample range each time.", 1, "Patterns: Walk Gait")
+
+		declare !pitchMapStrings[] := ("Lo to Played", "Lo to Random", "Hi to Lo", "Hi to Played", "Hi to Random", "Played to Lo", "Played to Hi", "Played to Random", "Random to Lo", "Random to Hi", "Random to Played")
+		menu(2, 5, PitchMap, 3, "Pitch Map | Which pitch map to use to borrow samples.", pitchMapStrings, "Patterns: Pitch Map")
+		declare !velocityMapStrings[] := ("Lo to Hi", "Lo to Played", "Lo to Random", "Hi to Lo", "Hi to Played", "Hi to Random", "Played to Lo", "Played to Hi", "Played to Random", "Random to Lo", "Random to Hi", "Random to Played")
+		menu(2, 5, VelocityMap, 1, "Velocity Map | Which velocity map to use to borrow samples.", velocityMapStrings, "Patterns: Velocity Map")
+
+		declare FromRoot
+		declare ToRoot
+		declare patternSpread := 1
+		declare walkCounter := 0
+		declare cycleSeedIndex := 1
+
+		// Differentiate
+
+		define UNIQUE_DESC := "Differentiate | How settings are uniquely applied across the keyboard."
+		label(3, 3, DifferentiateModeTxt, "Differentiate", 1, 1, UNIQUE_DESC)
+		declare !dModeStrings[] := ("Voices Only","Roots","Semitones","Wholetones","Minor Thirds","Major Thirds","Fourths","Tritones","Fifths","Octaves")
+		menu(3, 4, DifferentiateMode, 3, UNIQUE_DESC, dModeStrings, "Differentiate Mode")
+
+		// Maximum Values
+
+		label(4, 3, FateTxt, "Fate", 1, 1, "")
+
+		pers_value_edit(4, 4, ShiftFate, "Distance %", 0, 100, 0, 1, "Fate: Max Distance (%) | How much distance to inject into sample borrowing.", 1, "Fate: Max Distance (%)")
+		declare ~alphaShiftFate
+		pers_value_edit(4, 5, DetuneFate, "Detune ¢", 0, 150, 0, 1, "Fate: Max Detune (cents) | How much detune to inject into pitches, in cents.", 1, "Fate: Max Detune (cents)")
+		pers_value_edit(4, 6, DelayFate, "Delay ms", 0, 2000, 0, 1, "Fate: Max Delay (ms) | How much playback delay to inject into the timing of voices, up to 2000ms.", 1, "Fate: Max Delay (ms)")
+		declare polyphonic timingCache
+		declare polyphonic currentDelay
+		declare fateAnimSeed
+		declare !fateTxts[] := ("fate", "Fate", "fAte", "faTe", "fatE", "FAte", "fATe", "faTE", "FATe", "fATE", "FATE", "FAT3", "FaT3")
+
+		// Flux
+
+		label(5, 3, FluxTxt, "Flux", 1, 1, "")
+		pers_slider(5, 4, ShiftFlux, 0, 100, 0, "Flux: Shift (%) | How much sample borrowing distance can fluctuate.", 1, "Flux: Shift")
+		declare ~alphaShiftFlux
+		pers_slider(5, 5, DetuneFlux, 0, 100, 0, "Flux: Detune (%) | How much pitch can fluctuate.", 1, "Flux: Detune (%)")
+		declare ~alphaDetuneFlux
+		pers_slider(5, 6, DelayFlux, 0, 100, 0, "Flux: Delay (%) | How much playback delay can fluctuate.", 1, "Flux: Delay (%)")
+		declare ~alphaDelayFlux
+
+		declare ~alphaTotalFlux
+
+		declare !fluxTxts[] := ("fluX", "flUx", "fLux", "FLUX", "F!UX", "F!#X", "FL#X", "F!?!", "#?!X")
+		declare fluxFonts[] := (0, 1, 17, 18, 24)
+
+		START_INC(N, 4, 1)
+		literate_macro(label(5, N, #l#FluxTxt, "(inactive)", 1, 1, "")) on Shift, Detune, Delay
+		END_INC
+		literate_macro(#l#FluxTxt->text_alignment := 1) on Shift, Detune, Delay
+
+	//
+
+	declare $count
+	declare !noteName [128]
+	while ($count < 128)
+		!noteName[$count] := !ROOT[$count mod 12] & (($count/12)-2)
+		inc ($count)
+	end while
+
+	set_listener(NI_SIGNAL_TIMER_MS, 1000)
+end on
+
+//
+
+on persistence_changed
+	msg(TITLE & " " & VERSION)
+
+	alphaAge := pct_to_alpha(Age)
+
+	call UpdateBypass
+	CallAllUpdates()
+
+	// do this again at the end so we make sure visibility is correct.
+	if (Bypass = 1)
+		call UpdateBypass
+	end if
+end on
+
+//
+
+on listener
+	do_manage_msg(15000)
+
+	// Flux Text Animation
+	if (ShiftFate+DetuneFate+DelayFate > 0)
+		alphaTotalFlux := (alphaShiftFlux + alphaDelayFlux + alphaDetuneFlux) / 1.5
+		if (alphaTotalFlux > 1.0)
+			alphaTotalFlux := 1.0
+		end if
+	else
+		alphaTotalFlux := 0.0
+	end if
+
+	if (ShiftFate+DetuneFate+DelayFate > 0 and alphaTotalFlux > 0.0 and random(1, lerpInt(50, 4, alphaTotalFlux)) = 1)
+		FluxTxt->text := fluxTxts[random(0,fluxTxts.SIZE-1)]
+		FluxTxt->font_type := fluxFonts[random(0,4)]
+	else
+		FluxTxt->text := "Flux"
+		FluxTxt->font_type := 0
+	end if
+end on
+
+// for Value Edit and Menu UI, which require automaton ui controls if automation is desired.
+literate_macro(do_on_automaton(#l#)) on Bypass, Mode, Seed, PitchMap, VelocityMap, DifferentiateMode, ShiftFate, DelayFate, DetuneFate, PatternMode, PatternLimit
+
+// UI Control Callbacks
+
+literate_macro(on_ui_control_update_map(#l#)) on Timbre, MapSize, MapLo, MapHi
+macro on_ui_control_update_map(#x#)
+	on ui_control(#x#)
+		call UpdateMap
+	end on
+end macro
+
+on ui_control(Advanced)
+	call UpdateAdvanced
+end on
+
+on ui_control(Bypass)
+	call UpdateBypass
+end on
+
+on ui_control(DelayFate)
+	call UpdateDelay
+	call UpdateFluxVisibility
+end on
+
+on ui_control(DelayFlux)
+	call UpdateDelay
+end on
+
+on ui_control(DetuneFate)
+	call UpdateDetune
+	call UpdateFluxVisibility
+end on
+
+on ui_control(DetuneFlux)
+	call UpdateDetune
+end on
+
+on ui_control(Mix)
+	call UpdateMix
+end on
+
+on ui_control(Mode)
+	call UpdateMode
+	select (Mode)
+		case _MODE.Setup
+			msg("Setup | set the sample map.")
+		case _MODE.Tile
+			msg("Tile | simple timbre shift using a single sample across the entire keyboard")
+		case _MODE.HonkyTonk
+			msg("Honky Tonk | mimics the effects of wear and tear")
+		case _MODE.Shift
+			msg("Shift | choose samples to borrow based on offsets")
+		case _MODE.Patterns
+			msg("Patterns | use patterns to move the sample borrowing over time in intelligent ways.")
+	end select
+end on
+
+on ui_control(PatternLimit)
+	cycleSeedIndex := 1
+	walkCounter := 0
+end on
+
+on ui_control(PatternMode)
+	call UpdatePatternMode
+end on
+
+on ui_control(Randomize)
+	Seed := random(1, 9999)
+
+	Age := random(0, 100)
+	alphaAge := pct_to_alpha(Age)
+
+	Randomize := 0
+end on
+
+on ui_control(Seed)
+	FateTxt->text := fateTxts[randRangeA(0, fateTxts.SIZE-1, Seed)]
+	FateTxt->font_type := fluxFonts[randRangeB(0, fluxFonts.SIZE-1, Seed)]
+end on
+
+on ui_control(ShiftFate)
+	call UpdateShift
+	call UpdateFluxVisibility
+end on
+
+on ui_control(ShiftFlux)
+	call UpdateShift
+end on
+
+// Update Functions
+
+function UpdateAdvanced
+	if (Advanced = 1)
+		move(Advanced, 2, 5)
+
+		literate_macro(show(#l#)) on UI_ADVANCED, Mix
+
+		call UpdateFluxVisibility
+		call UpdateMap
+
+		UpdateHUD(0)
+	else
+		move(Advanced, 1, 5)
+		literate_macro(hide(#l#)) on UI_ADVANCED, Mix
+		UpdateHUD(1)
+	end if
+end function
+
+function UpdateBypass
+	if (Bypass = 1)
+		literate_macro(hide(#l#)) on UI_ALL
+	else
+		literate_macro(show(#l#)) on UI_ALL
+		CallAllUpdates()
+	end if
+end function
+
+function UpdateDelay
+	alphaDelayFlux := pct_to_alpha(DelayFlux)
+end function
+
+function UpdateDetune
+	alphaDetuneFlux := pct_to_alpha(DetuneFlux)
+end function
+
+function UpdateFluxVisibility
+	if (ShiftFate = 0 and DetuneFate = 0 and DelayFate = 0)
+		FateTxt->text := "Fate (inactive)"
+	else
+		FateTxt->text := "Fate"
+		FateTxt->font_type := 0
+	end if
+	literate_post_macro(FluxVisibility(#l#)) on Shift, Detune, Delay
+end function
+macro FluxVisibility(#l#)
+	if (#l#Fate = 0)
+		hide(#l#Flux)
+		show(#l#FluxTxt)
+	else
+		hide(#l#FluxTxt)
+		show(#l#Flux)
+	end if
+end macro
+
+function UpdateMode
+	literate_macro(hide(#l#)) on UI_ALL
+	literate_macro(show(#l#)) on UI_GLOBALS, Bypass
+
+	if (in_range(Mode, _MODE.Shift, _MODE.Patterns))
+		move(Seed, 3, 5)
+	end if
+
+	select(Mode)
+		case _MODE.Setup
+			literate_macro(hide(#l#)) on Mix, Bypass
+			literate_macro(show(#l#)) on UI_SETUP
+			UpdateHUD(1)
+			set_ui_color(9B090C6h)
+		case _MODE.Tile
+			hide(Mix)
+			literate_macro(show(#l#)) on Location
+			UpdateHUD(1)
+			set_ui_color(92FCBC5h)
+		case _MODE.HonkyTonk
+			move(Seed, 1, 4)
+			hide(Mix)
+			literate_macro(show(#l#)) on UI_HONKY_TONK
+			UpdateHUD(1)
+			set_ui_color(908E4B1h)
+		case _MODE.Shift
+			call UpdateAdvanced
+			literate_macro(show(#l#)) on UI_SHIFT
+			set_ui_color(9B5BB38h)
+		case _MODE.Patterns
+			literate_macro(show(#l#)) on UI_SHIFT, UI_ADVANCED, UI_PATTERNS
+			hide(Advanced)
+			UpdateHUD(0)
+			call UpdateFluxVisibility
+			call UpdatePatternMode
+			set_ui_color(9E1713Dh)
+	end select
+end function
+
+function UpdateHUD(Big)
+	HUD->text := ""
+	HUD->text_alignment := 1
+	// HUD->textline := "--- NEIGHBORS ---"
+	// HUD->textline := VERSION & ", by dlab"
+
+	if (Big = 1)
+		HUD->grid_width := 5
+		HUD->grid_height := 6
+		hud_lo := HUD_LO_LARGE
+		hud_hi := HUD_HI_LARGE
+	else
+		HUD->grid_width := 4
+		HUD->grid_height := 2
+		hud_lo := HUD_LO_SMALL
+		hud_hi := HUD_HI_SMALL
+	end if
+
+	call UpdateHUDBounds
+end function
+
+function UpdateHUDBounds
+	HUD->text := ""
+	HUD->text_alignment := 0
+	for i := 0 to 127
+		if (i = MapLo or i = MapHi)
+			hudNotesDry[i] := HUD_CHAR_BOUND
+			hudNotesWet[i] := HUD_CHAR_BOUND
+		else
+			hudNotesDry[i] := HUD_CHAR_EMPTY
+			hudNotesWet[i] := HUD_CHAR_EMPTY
+		end if
+	end for
+
+	txt := ""
+	for i := hud_lo to hud_hi
+		txt := txt & hudNotesDry[i]
+	end for
+
+	if (hud_hi = HUD_HI_LARGE)
+		iterate_macro(_txt(#n#)) := 1 to 8
+	else
+		iterate_macro(_txt(#n#)) := 1 to 2
+	end if
+end function
+
+function UpdateMap
+	alphaMapSize := pct_to_alpha(MapSize)
+	MapMid := MapLo + ((MapHi-MapLo)/2)
+	MapLoMod := clamp(lerpInt(MapMid - Timbre, MapLo, alphaMapSize), MapLo, MapHi)
+	MapHiMod := clamp(lerpInt(MapMid - Timbre, MapHi, alphaMapSize), MapLo, MapHi)
+
+	if (Advanced = 1)
+		patternSpread := 1 + int(real(MapHi-MapLo) * alphaMapSize)
+	else
+		patternSpread := MapHi - MapLo
+	end if
+
+	call UpdateHUDBounds
+end function
+
+function UpdateMix
+	if (Mix = 100)
+		//alphaMix := 1.0 // not using this outside of ui_control
+		DryMix := -48000
+		WetMix := 0
+	else if (Mix = 0)
+		//alphaMix := 0.0 // not using this outside of ui_control.
+		DryMix := 0
+		WetMix := -48000
+	else
+		alphaMix := pct_to_alpha(Mix)
+		DryMix := clamp(int(log10(1.0 - alphaMix) * 20000.0),-48000,0)
+		WetMix := clamp(int(log10(alphaMix) * 20000.0),-48000,0)
+	end if
+
+	//msg("alphaMix: " & alphaMix & ", DryMix: " & DryMix & ", WetMix: " & WetMix)
+end function
+
+function UpdatePatternMode
+	literate_macro(hide(#l#)) on PatternGait, VelocityMap, PitchMap, PatternLimit
+	select (PatternMode)
+		case _PATTERN.Walk
+			literate_macro(show(#l#)) on PatternGait, PatternLimit
+		case _PATTERN.SeededWalk
+			show(PatternLimit)
+		case _PATTERN.PitchMap
+			show(PitchMap)
+		case _PATTERN.VelocityMap
+			show(VelocityMap)
+	end select
+end function
+
+function UpdateShift
+	alphaShiftFate := pct_to_alpha(ShiftFate)
+	alphaShiftFlux := pct_to_alpha(ShiftFlux)
+end function
+
+macro CallAllUpdates
+	literate_macro(call Update#l#) on Mix, Map, Shift, Delay, Detune, Mode
+end macro
+
+//
+
+on note
+	if (Bypass # 1)
+
+		if (in_range(EVENT_NOTE, MapLo, MapHi) and num_elements(GROUPS_AFFECTED) = 0)
+			msg("You just played a silent key. Your sample map may be too large.")
+		end if
+
+		if (Advanced = 1)
+			if (Mix = 100)
+				ignore_event(EVENT_ID)
+			else
+				change_vol(EVENT_ID, DryMix, 1)
+			end if
+		else
+			ignore_event(EVENT_ID)
+		end if
+
+		select (Mode)
+			case _MODE.Setup
+				Advanced := 0
+				new_event := play_note_and_propagate(EVENT_NOTE, EVENT_VELOCITY, 0, -1)
+
+				//msg("Note: " & EVENT_NOTE & ", MapLo: " & MapLo & ", MapHi: " & MapHi & "groups affected count: " & num_elements(GROUPS_AFFECTED))
+
+				if (num_elements(GROUPS_AFFECTED) = 0)
+					msg("You just played a silent key.")
+				else
+					msg("Note played: " & !noteName[EVENT_NOTE])
+				end if
+
+			case _MODE.Tile
+				tone.note := lerpInt(MapLo, MapHi, pct_to_alpha(Location))
+
+				new_event := play_note(EVENT_NOTE, EVENT_VELOCITY, 0, -1)
+				change_vol(new_event, EVENT_ID->volume, 0)
+				change_pan(new_event, EVENT_ID->pan, 0)
+				change_note(new_event, tone.note)
+				change_tune(new_event, EVENT_ID->tune + (100000 * (EVENT_NOTE - tone.note)), 0)
+
+				sendWetToHUD()
+			case _MODE.HonkyTonk
+				seed_index := 1
+				genFate(0, 2)
+				tone.unisons := lerpInt(0, tone.fate, alphaAge)
+				txt := ""
+				for i := 0 to tone.unisons
+
+					if (i > 0)
+						genFate(0, 50000) // 0.05s
+						// drift
+						tone.fate := random(tone.fate - int(real(tone.fate) * 0.5), tone.fate)
+						txt := txt & "delay: " & de_micro(tone.fate) & "s, "
+						if (tone.fate > 0)
+							wait(tone.fate)
+						end if
+					end if
+
+					// get neighbor, further distance with age.
+					genFate(-(MapHi - MapLo), -1)
+					tone.fate := lerpInt(int(real(tone.fate) * 0.2), tone.fate, alphaAge)
+					txt := txt & "tone " & i & ", borrow: " & tone.fate
+
+					tone.note := clamp(EVENT_NOTE - tone.fate, MapLo, MapHi)
+					tone.transposition := EVENT_NOTE - tone.note
+
+					// get detune, more detune with age.
+					genFate(-10000, 10000)
+					tone.fate := int(real(tone.fate) * lerp(0.0, 2.75, alphaAge))
+					txt := txt & ", detune: " & de_milli(tone.fate) & "cts"
+					tone.transposition := (tone.transposition * 100000) + tone.fate
+
+					// get drift, which reigns the tune back to normal up to 50%.
+					tone.fate := random(int(real(tone.fate) * -0.5), 0)
+					txt := txt & ", drift: " & de_milli(tone.fate) & "cts"
+					tone.transposition := tone.transposition + tone.fate
+
+					///
+
+					genFate(0, 100)
+
+					if (Age * tone.fate > 8000)
+						if (tone.fate > 9000)
+							genFate(100000, 1000000)
+							txt := txt & ", hold out: " & de_micro(tone.fate) & "s"
+							new_event := play_note(tone.note, EVENT_VELOCITY, 0, tone.fate)
+						else
+							new_event := play_note(tone.note, EVENT_VELOCITY, 0, -1)
+							genFate(100000, 1000000)
+							txt := txt & ", fade out: " & de_micro(tone.fate) & "s"
+							fade_out(new_event, tone.fate, 1)
+						end if
+					else
+						new_event := play_note(tone.note, EVENT_VELOCITY, 0, -1)
+					end if
+
+					// get fade in
+					genFate(0, 100)
+					if (tone.fate < Age)
+						genFate(0, 3) // 25% chance
+						if (tone.fate = 1)
+							genFate(0, 50000) // 0.05s
+							tone.fate := lerpInt(0, tone.fate, alphaAge)
+							txt := txt & ", attack: " & de_micro(tone.fate) & "s"
+							fade_in(new_event, tone.fate)
+						end if
+					end if
+
+					sendWetToHUD()
+
+					change_vol(new_event, EVENT_ID->volume, 0)
+					change_pan(new_event, EVENT_ID->pan, 0)
+					change_tune(new_event, EVENT_ID->tune + tone.transposition, 0)
+
+					genFate(random(-4500, -6000), -6000)
+					tone.fate := lerpInt(0, tone.fate, (real(tone.unisons + 1)/3.0) * alphaAge)
+					txt := txt & ", rel volume: " & de_milli(tone.fate) & "dB | "
+				end for
+					//msg(txt)
+			case _MODE.Shift to _MODE.Patterns
+
+				if (Advanced = 1 and PreDelay > 0)
+					wait(PreDelay * 1000)
+				end if
+
+				if (ShiftFate + DelayFate + DetuneFate > 0)
+					// Calc Seed for Fate Text Animation
+					select DifferentiateMode
+						case 1 // Nothing
+							fateAnimSeed := Seed
+						case 2 // Roots
+							fateAnimSeed := (1+(EVENT_NOTE mod 12)) * Seed
+						case 3 // Semitones
+							fateAnimSeed := EVENT_NOTE * Seed
+						case 4 to 9 // wholetones ... fifths
+							fateAnimSeed := (1+(EVENT_NOTE/(DifferentiateMode-2))) * Seed
+						case 10 // Octaves
+							fateAnimSeed := (1+(EVENT_NOTE/12)) * Seed
+					end select
+
+					FateTxt->text := fateTxts[randRangeA(0, fateTxts.SIZE-1, fateAnimSeed)]
+					FateTxt->font_type := fluxFonts[randRangeB(0, fluxFonts.SIZE-1, fateAnimSeed)]
+				end if
+
+				seed_index := 1
+				genFate(0, 1000)
+				timingCache := tone.fate * DelayFate
+
+				if (Advanced = 0)
+					tone.unisons := 0
+				else
+					tone.unisons := Voices - 1
+				end if
+
+				for i := 0 to tone.unisons
+
+					// delay
+
+					if (i > 0 and timingCache > 0)
+						genFate(0, timingCache / Voices)
+						currentDelay := lerpInt(tone.fate, random(0, timingCache / Voices), alphaDelayFlux)
+						wait(currentDelay)
+						timingCache := timingCache - currentDelay
+					end if
+
+					// timbre
+
+					// logic mode
+
+					select (Mode)
+						case _MODE.Shift
+							if (Advanced = 1)
+								tone.note := clamp(EVENT_NOTE - Timbre, MapLoMod, MapHiMod)
+							else
+								tone.note := clamp(EVENT_NOTE - Timbre, MapLo, MapHi)
+							end if
+						case _MODE.Patterns
+
+							Advanced := 1
+
+							select (PatternMode)
+								case _PATTERN.Walk to _PATTERN.SeededWalk
+
+									tone.note := (MapMid - Timbre)
+
+									if (PatternMode = _PATTERN.Walk)
+										tone.note := tone.note + (walkCounter mod patternSpread)
+										walkCounter := walkCounter + PatternGait
+									else if (PatternMode = _PATTERN.SeededWalk)
+										if (cycleSeedIndex mod 2 = 0)
+												tone.note := randRangeB(tone.note, tone.note + patternSpread, Seed * cycleSeedIndex)
+											else
+												tone.note := randRangeA(tone.note, tone.note + patternSpread, Seed * cycleSeedIndex)
+											end if
+											inc(cycleSeedIndex)
+									end if
+
+									// wrap note back around if necessary
+									if (tone.note > MapHi)
+										tone.note := MapLo + (tone.note - MapHi) - 1
+									else if(tone.note < MapLo)
+										tone.note := MapHi - (MapLo- tone.note) + 1
+									end if
+
+									if (PatternLimit # 0 and walkCounter >= PatternLimit)
+										walkCounter := 0
+										cycleSeedIndex := 1
+									end if
+
+									tone.note := clamp(tone.note, MapLo, MapHi)
+								case _PATTERN.VelocityMap
+
+									// "Lo to Hi", "Lo to Played", "Lo to Random", "Hi to Lo", "Hi to Played", "Hi to Random", "Played to Lo", "Played to Hi", "Played to Random", "Random to Lo", "Random to Hi", "Random to Played"
+
+									select(VelocityMap)
+										case 1 to 3
+											FromRoot := MapLo
+										case 4 to 6
+											FromRoot := MapHi
+										case 7 to 9
+											FromRoot := EVENT_NOTE
+										case 10 to 12
+											FromRoot := random(MapLo, MapHi)
+									end select
+
+									if (VelocityMap = 4 or VelocityMap = 7 or VelocityMap = 10)
+										ToRoot := MapLo
+									else if (VelocityMap = 1 or VelocityMap = 8 or VelocityMap = 11)
+										ToRoot := MapHi
+									else if (VelocityMap = 2 or VelocityMap = 5 or VelocityMap = 12)
+										ToRoot := EVENT_NOTE
+									else if (VelocityMap = 3 or VelocityMap = 6 or VelocityMap = 9)
+										ToRoot := random(MapLo, MapHi)
+									end if
+
+									FromRoot := clamp(FromRoot - Timbre, MapLoMod, MapHiMod)
+									ToRoot := clamp(ToRoot - Timbre, MapLoMod, MapHiMod)
+									tone.note := lerpInt(FromRoot, ToRoot, real(EVENT_VELOCITY) / 127.0)
+								case _PATTERN.PitchMap
+
+									// "Lo to Played", "Lo to Random", "Hi to Lo", "Hi to Played", "Hi to Random", "Played to Lo", "Played to Hi", "Played to Random", "Random to Lo", "Random to Hi", "Random to Played"
+
+									select(PitchMap)
+										case 1 to 2
+											FromRoot := MapLo
+										case 3 to 5
+											FromRoot := MapHi
+										case 6 to 8
+											FromRoot := EVENT_NOTE
+										case 9 to 11
+											FromRoot := random(MapLo, MapHi)
+									end select
+
+									if (PitchMap = 3 or PitchMap = 6 or PitchMap = 9)
+										ToRoot := MapLo
+									else if (PitchMap = 7 or PitchMap = 10)
+										ToRoot := MapHi
+									else if (PitchMap = 1 or PitchMap = 4 or PitchMap = 11)
+										ToRoot := EVENT_NOTE
+									else if (PitchMap = 2 or PitchMap = 5 or PitchMap = 8)
+										ToRoot := random(MapLo, MapHi)
+									end if
+
+									FromRoot := clamp(FromRoot - Timbre, MapLoMod, MapHiMod)
+									ToRoot := clamp(ToRoot - Timbre, MapLoMod, MapHiMod)
+
+									tone.note := lerpInt(FromRoot, ToRoot, pct_to_alpha(clamp(map(EVENT_NOTE, MapLoMod, MapHiMod, 0, 100), 0, 100)))
+							end select
+						end select
+
+					if (Advanced = 1)
+
+						genFate(MapLo, MapHi)
+						// inject flux into fate
+						tone.fate := lerpInt(tone.fate, random(MapLo, MapHi), alphaShiftFlux)
+						// inject strength modulated fate&flux into note value
+						tone.note := lerpInt(tone.note, tone.fate, alphaShiftFate)
+
+						// timbre re-tuning + detune
+						genFate(-1000, 1000)
+						tone.fate := tone.fate * DetuneFate
+						// inject flux into fate
+						tone.transposition := lerpInt(tone.fate, random(-DetuneFate * 1000, DetuneFate * 1000), alphaDetuneFlux)
+					end if
+
+					new_event := play_note(tone.note, EVENT_VELOCITY, 0, -1)
+
+					sendWetToHUD()
+
+					if (Advanced = 1)
+						change_vol(new_event, WetMix, 1)
+					else
+						// no detune
+						tone.transposition := 0
+						change_vol(new_event, EVENT_ID->volume, 0)
+					end if
+
+					change_pan(new_event, EVENT_ID->pan, 0)
+					// add timbre re-tuning and detune (if any) together
+					change_tune(new_event, EVENT_ID->tune + ((EVENT_NOTE - tone.note) * 100000) + tone.transposition, 0)
+				end for
+		end select
+
+		HUD->text := ""
+		txt := ""
+		HUD->text_alignment := 0
+
+		hudNotesDry[EVENT_NOTE] := HUD_CHAR_NOTE
+
+		if (Mode = _MODE.Setup)
+			wait(1)
+			if (new_event->zone_id = -1)
+				hudNotesDry[EVENT_NOTE] := HUD_CHAR_OOB
+			end if
+		end if
+
+		for i := hud_lo to hud_hi
+			txt := txt & hudNotesDry[i]
+		end for
+		HUD->textline := txt
+
+		if (hud_hi = HUD_HI_LARGE)
+			iterate_macro(_txt(#n#)) := 1 to 3
+			if (Mode = _MODE.Setup)
+				iterate_macro(_txt(#n#)) := 1 to 4
+			end if
+		end if
+
+		if (Mode # _MODE.Setup)
+
+			txt := ""
+
+			for i := hud_lo to hud_hi
+				txt := txt & hudNotesWet[i]
+			end for
+			HUD->textline := txt
+
+			if (hud_hi = HUD_HI_LARGE)
+				iterate_macro(_txt(#n#)) := 1 to 3
+			end if
+		end if
+	end if
+end on
+
+on release
+	HUD->text := ""
+
+	if (EVENT_NOTE = MapLo or EVENT_NOTE = MapHi)
+		hudNotesDry[EVENT_NOTE] := HUD_CHAR_BOUND
+	else
+		hudNotesDry[EVENT_NOTE] := HUD_CHAR_EMPTY
+	end if
+
+	txt := ""
+	for i := hud_lo to hud_hi
+		txt := txt & hudNotesDry[i]
+	end for
+	HUD->textline := txt
+	if (hud_hi = HUD_HI_LARGE)
+		iterate_macro(_txt(#n#)) := 1 to 3
+		if (Mode = _MODE.Setup)
+			iterate_macro(_txt(#n#)) := 1 to 4
+		end if
+	end if
+
+	if (Mode # _MODE.Setup)
+
+		if (get_event_par_arr(EVENT_ID, EVENT_PAR_CUSTOM, 0) = MapLo or get_event_par_arr(EVENT_ID, EVENT_PAR_CUSTOM, 0) = MapHi)
+			hudNotesWet[get_event_par_arr(EVENT_ID, EVENT_PAR_CUSTOM, 0)] := HUD_CHAR_BOUND
+		else
+			hudNotesWet[get_event_par_arr(EVENT_ID, EVENT_PAR_CUSTOM, 0)] := HUD_CHAR_EMPTY
+		end if
+
+		txt := ""
+		for i := hud_lo to hud_hi
+			txt := txt & hudNotesWet[i]
+		end for
+		HUD->textline := txt
+		if (hud_hi = HUD_HI_LARGE)
+			iterate_macro(_txt(#n#)) := 1 to 3
+		end if
+	end if
+end on
+
+macro _txt(#n#)
+	HUD->textline := txt
+end macro
+
+macro sendWetToHUD()
+	hudNotesWet[tone.note] := "|"
+	new_event->custom := tone.note
+	set_event_par_arr(new_event, EVENT_PAR_CUSTOM, tone.note, 0)
+end macro
+
+// TODO change this to a function for better legibility ?
+macro genFate(min, max)
+	if (Mode = _MODE.HonkyTonk)
+		tone.fate := Seed * seed_index * EVENT_NOTE
+	else
+		tone.fate := Seed * seed_index
+		select DifferentiateMode
+			case 1 // Nothing
+				tone.fate := tone.fate
+			case 2 // Roots
+				tone.fate := (1+(EVENT_NOTE mod 12)) * tone.fate
+			case 3 // Semitones
+				tone.fate := EVENT_NOTE * tone.fate
+			case 4 to 9 // wholetones ... fifths
+				tone.fate := (1+(EVENT_NOTE/(DifferentiateMode-2))) * tone.fate
+			case 10 // Octaves
+				tone.fate := (1+(EVENT_NOTE/12)) * tone.fate
+		end select
+	end if
+
+	if (seed_index mod 2 = 0)
+		tone.fate := randRangeB(min, max, tone.fate)
+	else
+		tone.fate := randRangeA(min, max, tone.fate)
+	end if
+	inc(seed_index)
+end macro
