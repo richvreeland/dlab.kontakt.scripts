@@ -13,3 +13,6 @@ A multisample ensembler.
 
 ### 🐏 [panoram](panoram/)
 A novelty panner.
+
+### 👥 [neighbors](neighbors/)
+A borrowing resampler.
