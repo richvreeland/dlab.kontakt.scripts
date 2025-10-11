@@ -3,7 +3,7 @@
 // compatibility : Kontakt 7 (tested in 7.10.6)
 
 define TITLE := "Neighbors"
-define VERSION := "v1.00"
+define VERSION := "v1.01"
 
 import "../Library/Macros.ksp"
 import "../Library/Functions.ksp"
@@ -145,7 +145,6 @@ on init
 		declare ToRoot
 		declare patternSpread := 1
 		declare walkCounter := 0
-		declare cycleSeedIndex := 1
 
 		// Differentiate
 
@@ -255,6 +254,10 @@ on ui_control(Advanced)
 	call UpdateAdvanced
 end on
 
+on ui_control(Age)
+	alphaAge := pct_to_alpha(Age)
+end on
+
 on ui_control(Bypass)
 	call UpdateBypass
 end on
@@ -298,7 +301,6 @@ on ui_control(Mode)
 end on
 
 on ui_control(PatternLimit)
-	cycleSeedIndex := 1
 	walkCounter := 0
 end on
 
@@ -578,7 +580,7 @@ on note
 						genFate(0, 50000) // 0.05s
 						// drift
 						tone.fate := random(tone.fate - int(real(tone.fate) * 0.5), tone.fate)
-						txt := txt & "delay: " & de_micro(tone.fate) & "s, "
+						txt := txt & " " & de_micro(tone.fate) & "s, "
 						if (tone.fate > 0)
 							wait(tone.fate)
 						end if
@@ -587,7 +589,7 @@ on note
 					// get neighbor, further distance with age.
 					genFate(-(MapHi - MapLo), -1)
 					tone.fate := lerpInt(int(real(tone.fate) * 0.2), tone.fate, alphaAge)
-					txt := txt & "tone " & i & ", borrow: " & tone.fate
+					txt := txt & "tone " & i & ", " & tone.fate & "st"
 
 					tone.note := clamp(EVENT_NOTE - tone.fate, MapLo, MapHi)
 					tone.transposition := EVENT_NOTE - tone.note
@@ -595,12 +597,12 @@ on note
 					// get detune, more detune with age.
 					genFate(-10000, 10000)
 					tone.fate := int(real(tone.fate) * lerp(0.0, 2.75, alphaAge))
-					txt := txt & ", detune: " & de_milli(tone.fate) & "cts"
+					txt := txt & ", d2n: " & de_milli(tone.fate) & "cts"
 					tone.transposition := (tone.transposition * 100000) + tone.fate
 
 					// get drift, which reigns the tune back to normal up to 50%.
 					tone.fate := random(int(real(tone.fate) * -0.5), 0)
-					txt := txt & ", drift: " & de_milli(tone.fate) & "cts"
+					txt := txt & ", drft: " & de_milli(tone.fate) & "cts"
 					tone.transposition := tone.transposition + tone.fate
 
 					///
@@ -610,12 +612,12 @@ on note
 					if (Age * tone.fate > 8000)
 						if (tone.fate > 9000)
 							genFate(100000, 1000000)
-							txt := txt & ", hold out: " & de_micro(tone.fate) & "s"
+							txt := txt & ", H: " & de_micro(tone.fate) & "s"
 							new_event := play_note(tone.note, EVENT_VELOCITY, 0, tone.fate)
 						else
 							new_event := play_note(tone.note, EVENT_VELOCITY, 0, -1)
 							genFate(100000, 1000000)
-							txt := txt & ", fade out: " & de_micro(tone.fate) & "s"
+							txt := txt & ", R: " & de_micro(tone.fate) & "s"
 							fade_out(new_event, tone.fate, 1)
 						end if
 					else
@@ -629,7 +631,7 @@ on note
 						if (tone.fate = 1)
 							genFate(0, 50000) // 0.05s
 							tone.fate := lerpInt(0, tone.fate, alphaAge)
-							txt := txt & ", attack: " & de_micro(tone.fate) & "s"
+							txt := txt & ", A: " & de_micro(tone.fate) & "s"
 							fade_in(new_event, tone.fate)
 						end if
 					end if
@@ -642,7 +644,7 @@ on note
 
 					genFate(random(-4500, -6000), -6000)
 					tone.fate := lerpInt(0, tone.fate, (real(tone.unisons + 1)/3.0) * alphaAge)
-					txt := txt & ", rel volume: " & de_milli(tone.fate) & "dB | "
+					txt := txt & ", " & de_milli(tone.fate) & "dB | "
 				end for
 					//msg(txt)
 			case _MODE.Shift to _MODE.Patterns
@@ -715,12 +717,8 @@ on note
 										tone.note := tone.note + (walkCounter mod patternSpread)
 										walkCounter := walkCounter + PatternGait
 									else if (PatternMode = _PATTERN.SeededWalk)
-										if (cycleSeedIndex mod 2 = 0)
-												tone.note := randRangeB(tone.note, tone.note + patternSpread, Seed * cycleSeedIndex)
-											else
-												tone.note := randRangeA(tone.note, tone.note + patternSpread, Seed * cycleSeedIndex)
-											end if
-											inc(cycleSeedIndex)
+										tone.note := randRangeA(tone.note, tone.note + patternSpread, Seed * ((walkCounter+1) mod patternSpread))
+										inc(walkCounter)
 									end if
 
 									// wrap note back around if necessary
@@ -732,7 +730,6 @@ on note
 
 									if (PatternLimit # 0 and walkCounter >= PatternLimit)
 										walkCounter := 0
-										cycleSeedIndex := 1
 									end if
 
 									tone.note := clamp(tone.note, MapLo, MapHi)

@@ -1,6 +1,6 @@
 ```
 neighbors.ksp | a borrowing resampler
-v1.00         | ©2025 dlab
+v1.01         | ©2025 dlab
 ```
 
 Neighbors opens up a wealth of timbral options for your old multi-sample instrument. Have you ever transposed the MIDI going into your sampler up some number of semitones, and then pitched the audio down by the same amount? This script essentially recreates that timbral shifting effect, but with many more options. By intelligently playing neighboring samples instead of the samples that are assigned to each key you play by default, Neighbors allows you to dramatically change the sound of your old sampler patches.
