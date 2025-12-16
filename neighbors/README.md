@@ -45,7 +45,7 @@ Define the range of your sample map by using the **Map Lo** and **Map Hi** param
 
 ## Tile Mode
 
-Limit your sample borrowing to a single sample, regardless of what you play. The **Location** knob lets you specify which part of the sample map to focus on.
+Limit the number of samples you borrow in a tiled manner. Use the **Fidelity** knob to recreate classic sampling styles: use every other sample at 100%, all the way down to using only one at 0%. The **Location** knob lets you specify which part of the sample map to focus on.
 
 ## Mode > Honky Tonk
 

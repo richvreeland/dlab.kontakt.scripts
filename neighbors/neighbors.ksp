@@ -3,7 +3,7 @@
 // compatibility : Kontakt 7 (tested in 7.10.6)
 
 define TITLE := "Neighbors"
-define VERSION := "v1.01"
+define VERSION := "v1.1"
 
 import "../Library/Macros.ksp"
 import "../Library/Functions.ksp"
@@ -39,7 +39,7 @@ on init
 	define UI_ADVANCED := StagingTxt, PreDelay, Voices, MapSize, DifferentiateModeTxt, DifferentiateMode, Seed, FateTxt, ShiftFate, DelayFate, DetuneFate, FluxTxt, ShiftFlux, DelayFlux, DetuneFlux, ShiftFluxTxt, DetuneFluxTxt, DelayFluxTxt
 	define UI_PATTERNS := PatternTxt, PatternMode, PatternLimit, PatternGait, PitchMap, VelocityMap
 
-	define UI_ALL := UI_GLOBALS, UI_SETUP, UI_HONKY_TONK, UI_SHIFT, UI_ADVANCED, UI_PATTERNS, Location, MapSize
+	define UI_ALL := UI_GLOBALS, UI_SETUP, UI_HONKY_TONK, UI_SHIFT, UI_ADVANCED, UI_PATTERNS, Location, Fidelity, MapSize
 
 	// Globals
 
@@ -51,7 +51,7 @@ on init
 
 	label(1, 1, ModeTxt, "Mode", 1, 1, "")
 	declare !mStrings[] := ("Setup", "Tile", "Honky Tonk", "Shift", "Patterns")
-	menu(1, 2, Mode, 2, "Mode | Which mode to operate in.", mStrings, "Mode")
+	menu(1, 2, Mode, 1, "Mode | Which mode to operate in.", mStrings, "Mode")
 
 	define HUD_LO_SMALL := 25
 	define HUD_HI_SMALL := 100
@@ -77,6 +77,17 @@ on init
 
 	knob(1, 3, Location, "Location", 0, 100, 0, "Location | What part of the sample map to use.", 1, "Tile: Location %")
 	Location->unit := KNOB_UNIT_PERCENT
+
+	pers_value_edit(1, 5, Fidelity, "Fidelity", 0, 100, 0, 1, "Fidelity | How many samples to use across the keyboard. 0% = one sample, 100% = every other key.", 1, "Tile: Fidelity %")
+	declare ~alphaFidelity
+	declare tileAnchor
+	declare tileRange
+	declare tileMaxSamples
+	declare tileNumSamples
+	declare tileStepSize
+	declare tileMid
+	declare tileLocationOffset
+	declare tileZoneIndex
 
 	// Honky Tonk
 
@@ -239,7 +250,7 @@ on listener
 end on
 
 // for Value Edit and Menu UI, which require automaton ui controls if automation is desired.
-literate_macro(do_on_automaton(#l#)) on Bypass, Mode, Seed, PitchMap, VelocityMap, DifferentiateMode, ShiftFate, DelayFate, DetuneFate, PatternMode, PatternLimit
+literate_macro(do_on_automaton(#l#)) on Bypass, Mode, Seed, PitchMap, VelocityMap, DifferentiateMode, ShiftFate, DelayFate, DetuneFate, PatternMode, PatternLimit, Fidelity
 
 // UI Control Callbacks
 
@@ -278,6 +289,10 @@ end on
 
 on ui_control(DetuneFlux)
 	call UpdateDetune
+end on
+
+on ui_control(Fidelity)
+	alphaFidelity := pct_to_alpha(Fidelity)
 end on
 
 on ui_control(Mix)
@@ -402,7 +417,7 @@ function UpdateMode
 			set_ui_color(9B090C6h)
 		case _MODE.Tile
 			hide(Mix)
-			literate_macro(show(#l#)) on Location
+			literate_macro(show(#l#)) on Location, Fidelity
 			UpdateHUD(1)
 			set_ui_color(92FCBC5h)
 		case _MODE.HonkyTonk
@@ -560,7 +575,41 @@ on note
 				end if
 
 			case _MODE.Tile
-				tone.note := lerpInt(MapLo, MapHi, pct_to_alpha(Location))
+				tileAnchor := lerpInt(MapLo, MapHi, pct_to_alpha(Location))
+
+				if (Fidelity = 0)
+					// Original behavior: single sample from Location
+					tone.note := tileAnchor
+				else
+					// Calculate number of samples linearly with Fidelity
+					// At 100%: maxSamples (range/2, i.e. every other key)
+					// At >0%: minimum of 2 samples
+					tileRange := MapHi - MapLo
+					tileMaxSamples := tileRange / 2
+					if (tileMaxSamples < 2)
+						tileMaxSamples := 2
+					end if
+					tileNumSamples := lerpInt(2, tileMaxSamples, alphaFidelity)
+
+					// Step size derived from number of samples
+					tileStepSize := tileRange / tileNumSamples
+					if (tileStepSize < 2)
+						tileStepSize := 2
+					end if
+
+					// Divide range into zones, find which zone the played note is in
+					tileZoneIndex := (EVENT_NOTE - MapLo) / tileStepSize
+					if (tileZoneIndex >= tileNumSamples)
+						tileZoneIndex := tileNumSamples - 1
+					end if
+
+					// Base sample for this zone (center of zone)
+					// Then offset by Location's deviation from center
+					tileMid := (MapLo + MapHi) / 2
+					tileLocationOffset := tileAnchor - tileMid
+					tone.note := MapLo + (tileZoneIndex * tileStepSize) + (tileStepSize / 2) + tileLocationOffset
+					tone.note := clamp(tone.note, MapLo, MapHi)
+				end if
 
 				new_event := play_note(EVENT_NOTE, EVENT_VELOCITY, 0, -1)
 				change_vol(new_event, EVENT_ID->volume, 0)
