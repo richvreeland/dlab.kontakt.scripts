@@ -1,6 +1,6 @@
 ```
 neighbors.ksp | a borrowing resampler
-v1.1          | ©2025 dlab
+v1.2          | ©2025 dlab
 ```
 
 Neighbors opens up a wealth of timbral options for your old multi-sample instrument. Have you ever transposed the MIDI going into your sampler up some number of semitones, and then pitched the audio down by the same amount? This script essentially recreates that timbral shifting effect, but with many more options. By intelligently playing neighboring samples instead of the samples that are assigned to each key you play by default, Neighbors allows you to dramatically change the sound of your old sampler patches.
@@ -91,7 +91,7 @@ The **Timbre** knob allows you to offset the sample borrowing in semitones, whil
 
 ### Differentiate Panel
 
-This panel allows you to control how the **Fate** system works, by constraining how the random generation is grouped. For instance, differentiating by **Roots** gives you a different "fate" for each key regardless of octave, so all C's have the same effect, as do all C#'s, and so forth. **Voices Only** will apply the same fate to every key, but each voice is different (ie. having more than one voice play the same key, each has a different fate). All other Differentiate Modes build upon this behavior. Differentiating by **Semitones** gives you the behavior of **Honky Tonk** mode, which also gives a different reproducible effect (fate) to each key across the entire keyboard. The **Model #** is the base seed for generation, so changing this will essentially "re-roll" the fate of every key.
+This panel allows you to control how the **Fate** system works, by constraining how the random generation is grouped. For instance, differentiating by **Roots** gives you a different "fate" for each key regardless of octave, so all C's have the same effect, as do all C#'s, and so forth. **Voices Only** will apply the same fate to every key, but each voice is different (ie. having more than one voice play the same key, each has a different fate). All other Differentiate Modes build upon this behavior. Differentiating by **Semitones** gives you the behavior of **Honky Tonk** mode, which also gives a different reproducible effect (fate) to each key across the entire keyboard. The **Model #** is the base seed for generation, so changing this will essentially "re-roll" the fate of every key. Lastly, **Inject Velocity** allows you to "fate" performance by velocity, which opens up more variety in outcomes, while still keeping results determistic — great for when you want playback of your recordings to be the same every time.
 
 ### Fate Panel
 

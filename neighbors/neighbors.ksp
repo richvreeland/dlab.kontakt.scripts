@@ -3,7 +3,7 @@
 // compatibility : Kontakt 7 (tested in 7.10.6)
 
 define TITLE := "Neighbors"
-define VERSION := "v1.1"
+define VERSION := "v1.2"
 
 import "../Library/Macros.ksp"
 import "../Library/Functions.ksp"
@@ -36,7 +36,7 @@ on init
 	define UI_SETUP := MapLo, MapHi
 	define UI_HONKY_TONK := Age, Seed, Randomize
 	define UI_SHIFT := Timbre, Advanced
-	define UI_ADVANCED := StagingTxt, PreDelay, Voices, MapSize, DifferentiateModeTxt, DifferentiateMode, Seed, FateTxt, ShiftFate, DelayFate, DetuneFate, FluxTxt, ShiftFlux, DelayFlux, DetuneFlux, ShiftFluxTxt, DetuneFluxTxt, DelayFluxTxt
+	define UI_ADVANCED := StagingTxt, PreDelay, Voices, MapSize, DifferentiateModeTxt, DifferentiateMode, InjectVelocity, Seed, FateTxt, ShiftFate, DelayFate, DetuneFate, FluxTxt, ShiftFlux, DelayFlux, DetuneFlux, ShiftFluxTxt, DetuneFluxTxt, DelayFluxTxt
 	define UI_PATTERNS := PatternTxt, PatternMode, PatternLimit, PatternGait, PitchMap, VelocityMap
 
 	define UI_ALL := UI_GLOBALS, UI_SETUP, UI_HONKY_TONK, UI_SHIFT, UI_ADVANCED, UI_PATTERNS, Location, Fidelity, MapSize
@@ -163,6 +163,7 @@ on init
 		label(3, 3, DifferentiateModeTxt, "Differentiate", 1, 1, UNIQUE_DESC)
 		declare !dModeStrings[] := ("Voices Only","Roots","Semitones","Wholetones","Minor Thirds","Major Thirds","Fourths","Tritones","Fifths","Octaves")
 		menu(3, 4, DifferentiateMode, 3, UNIQUE_DESC, dModeStrings, "Differentiate Mode")
+		pers_button(3, 6, 0, InjectVelocity, "Inject Velocity", "Inject Velocity | Multiply seed by note velocity for reproducible variety.", 1, "Inject Velocity")
 
 		// Maximum Values
 
@@ -984,6 +985,10 @@ macro genFate(min, max)
 			case 10 // Octaves
 				tone.fate := (1+(EVENT_NOTE/12)) * tone.fate
 		end select
+
+		if (InjectVelocity = 1)
+			tone.fate := tone.fate * EVENT_VELOCITY
+		end if
 	end if
 
 	if (seed_index mod 2 = 0)
